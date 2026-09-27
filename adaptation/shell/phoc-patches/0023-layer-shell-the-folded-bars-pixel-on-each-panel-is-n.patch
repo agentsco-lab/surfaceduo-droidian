@@ -1,0 +1,38 @@
+From e7d531f8136dc9f6512208b2296523f560372a90 Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+Date: Sat, 26 Sep 2026 14:15:22 +0300
+Subject: [PATCH] layer-shell: the folded bars' pixel on each panel is not
+ taken from windows
+
+phosh's folded top bars, one per panel, each keep an exclusive zone of one
+pixel so that they stay drawn above their backdrops (#63). Together they
+took two pixels from the top of every window, and the wallpaper showed in a
+line above each.
+---
+ src/layer-shell.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/layer-shell.c b/src/layer-shell.c
+index 9f00928..275e976 100644
+--- a/src/layer-shell.c
++++ b/src/layer-shell.c
+@@ -360,6 +360,16 @@ phoc_layer_shell_arrange (PhocOutput *output)
+   for (size_t i = 0; i < G_N_ELEMENTS (layers); ++i)
+     sent_configure |= arrange_layer (output, seats, layers[i], &usable_area, true);
+ 
++  /* A reservation of a pixel or two at the top is phosh's folded bars - one
++   * per panel, each keeping its exclusive zone positive so that it stays
++   * drawn above its own backdrop once unfolded (#63) - not a strip windows
++   * have to keep out of: a window on a panel started that far down, and the
++   * wallpaper showed above it. */
++  if (usable_area.y > 0 && usable_area.y <= 2) {
++    usable_area.height += usable_area.y;
++    usable_area.y = 0;
++  }
++
+   usable_area_changed = memcmp (&output->usable_area, &usable_area, sizeof (output->usable_area));
+   usable_area_changed |= update_panel_bottom (output);
+   if (usable_area_changed) {
+-- 
+2.43.0
+

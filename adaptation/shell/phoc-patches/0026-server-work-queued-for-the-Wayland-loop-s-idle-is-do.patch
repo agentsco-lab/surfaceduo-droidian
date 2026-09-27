@@ -1,0 +1,39 @@
+From 64493a45695a208c18a5fe1235c01e181d027fa2 Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+Date: Sat, 26 Sep 2026 15:14:36 +0300
+Subject: [PATCH] server: work queued for the Wayland loop's idle is done
+ before GLib sleeps
+
+The Wayland loop runs inside GLib's as a source woken by its fd, and its
+idle list - wlroots' frame requests and configures among it - was only
+worked through when a client had something to read. Queued from GLib's
+side, a D-Bus call or a timeout, it waited for the next unrelated message:
+a window brought back from the dock on a still screen got its output frame,
+and so its first frame, ~260 ms late (restore 290 ms, Calculator drawing
+in 12 of them).
+---
+ src/server.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/src/server.c b/src/server.c
+index 2c1be51..2d64f85 100644
+--- a/src/server.c
++++ b/src/server.c
+@@ -106,6 +106,14 @@ wayland_event_source_prepare (GSource *base,
+ 
+   *timeout = -1;
+ 
++  /* Work the Wayland loop was given to do when it next goes idle - a frame
++   * asked for, a configure to send - is only done when it runs, and it runs
++   * when its fd has something to read. Given from GLib's side (a D-Bus call,
++   * a timeout), it waited for the next unrelated client message: a window
++   * brought back from the dock on a still screen waited ~260 ms for the
++   * output's frame, and so for its own. */
++  wl_event_loop_dispatch_idle (wl_display_get_event_loop (source->display));
++
+   wl_display_flush_clients (source->display);
+ 
+   return FALSE;
+-- 
+2.43.0
+

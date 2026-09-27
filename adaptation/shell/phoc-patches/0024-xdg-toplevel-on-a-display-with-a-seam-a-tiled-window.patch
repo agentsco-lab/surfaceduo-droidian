@@ -1,0 +1,54 @@
+From da221f7747228775104c583365d81bc5fe5beddd Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+Date: Sat, 26 Sep 2026 14:15:22 +0300
+Subject: [PATCH] xdg-toplevel: on a display with a seam a tiled window is
+ tiled on all four edges
+
+The side a tiled window turns to is the hinge, as much the end of the screen
+as the other three. Told of three edges only, GTK kept its shadow margin and
+drew its frame's outline, a light line along the top of every window.
+---
+ src/xdg-toplevel.c | 21 ++++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/src/xdg-toplevel.c b/src/xdg-toplevel.c
+index c6ee0d8..a65818d 100644
+--- a/src/xdg-toplevel.c
++++ b/src/xdg-toplevel.c
+@@ -246,13 +246,32 @@ set_maximized (PhocView *view, bool maximized)
+ }
+ 
+ 
++static gboolean
++on_seamed_output (PhocView *view)
++{
++  PhocOutput *output = phoc_view_get_output (view);
++  PhocOutputConfig *oc;
++
++  if (!output)
++    return FALSE;
++  oc = phoc_config_get_output (phoc_server_get_config (phoc_server_get_default ()), output);
++  return oc && oc->seam > 0;
++}
++
++
+ static void
+ set_tiled (PhocView *view, bool tiled)
+ {
+   PhocXdgToplevel *self = PHOC_XDG_TOPLEVEL (view);
+   uint32_t tile_edges = WLR_EDGE_NONE;
+ 
+-  if (tiled) {
++  /* On an output made of two panels the side a tiled window turns to is the
++   * hinge - as much the end of the screen as the other three. A window told
++   * it is tiled on three edges only keeps its shadow margin and draws its
++   * frame's outline, a light line along the top of every window. */
++  if (tiled && on_seamed_output (view)) {
++    tile_edges = WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT | WLR_EDGE_RIGHT;
++  } else if (tiled) {
+     switch (phoc_view_get_tile_direction (view)) {
+     case PHOC_VIEW_TILE_LEFT:
+       tile_edges = WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT;
+-- 
+2.43.0
+

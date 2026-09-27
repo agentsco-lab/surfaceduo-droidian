@@ -1,0 +1,46 @@
+From 1122e223da79dd4ae1dda98e98507ed2596430bf Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+Date: Sat, 26 Sep 2026 14:26:17 +0300
+Subject: [PATCH] layout-transaction: a layer surface acking after the timeout
+ is not an error
+
+A layer surface configured while the display is off draws, and acks, only
+once the display is back on - after the 3 s timeout has set the count of
+pending configures back to zero. Each such ack failed an assertion, and
+each timeout was a warning, though a transaction applies nothing yet: the
+journal filled with both at every unblank (#240). Both are debug messages.
+---
+ src/layout-transaction.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/src/layout-transaction.c b/src/layout-transaction.c
+index 91b905e..046aacc 100644
+--- a/src/layout-transaction.c
++++ b/src/layout-transaction.c
+@@ -67,7 +67,7 @@ on_timeout_expired (gpointer user_data)
+   PhocLayoutTransaction *self = PHOC_LAYOUT_TRANSACTION (user_data);
+ 
+   self->layer_timer_id = 0;
+-  g_warning ("Timeout (%dms) expired with %u configures pending",
++  g_debug ("Timeout (%dms) expired with %u configures pending",
+              TIMEOUT_LAYER_MS, self->pending_layer_configures);
+   abort_transaction (self);
+ }
+@@ -208,7 +208,13 @@ phoc_layout_transaction_notify_layer_configured (PhocLayoutTransaction *self)
+ 
+   g_assert (PHOC_IS_LAYOUT_TRANSACTION (self));
+ 
+-  g_return_if_fail (self->pending_layer_configures > 0);
++  /* A layer surface configured while the display is off draws, and so acks,
++   * only once it is back on - long after the timeout has given up on it and
++   * set the count back to zero. That late ack is expected, not an error. */
++  if (self->pending_layer_configures == 0) {
++    g_debug ("A layer surface acked after its transaction timed out");
++    return;
++  }
+ 
+   self->pending_layer_configures--;
+   if (self->pending_layer_configures) {
+-- 
+2.43.0
+

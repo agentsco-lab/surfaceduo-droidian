@@ -1,0 +1,136 @@
+From 289aaa17220c4ef41dda09264e0c1990912f3359 Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+Date: Fri, 25 Sep 2026 02:51:36 +0300
+Subject: [PATCH] layer-shell: a keyboard on one panel reserves that panel's
+ bottom
+
+On an output with a tiling-seam, a layer surface anchored to the bottom and one side that asks for an exclusive zone reserves the bottom of the panel it stands on: windows tiled there are made that much shorter, the other panel's are left alone. The protocol gives a corner-anchored surface no zone, so windows stayed under the one-panel keyboard. The reservation is what the surface asks for, not where its slide has got to, so windows are resized once. A window fitted into a panel by scaling (0008) is asked for the box's height at its scale, rather than centred in a shorter box with its bottom still under the keyboard.
+---
+ src/layer-shell.c | 55 +++++++++++++++++++++++++++++++++++++++++++++++
+ src/output.h      |  4 ++++
+ src/view.c        | 14 +++++++++++-
+ 3 files changed, 72 insertions(+), 1 deletion(-)
+
+diff --git a/src/layer-shell.c b/src/layer-shell.c
+index 4cbf82a..9f00928 100644
+--- a/src/layer-shell.c
++++ b/src/layer-shell.c
+@@ -270,6 +270,60 @@ view_arrange_iter (PhocDesktop *desktop, PhocView *view, gpointer unused)
+   return TRUE;
+ }
+ 
++/*
++ * An output made of two panels (a `tiling-seam` in its configuration) has a
++ * keyboard one panel wide, anchored to the bottom and one side, that asks for
++ * an exclusive zone. The protocol gives no zone to a surface anchored to a
++ * corner, so windows stayed under the keyboard, and a field at a window's
++ * bottom - Firefox's address bar - was typed into blind. Such a surface
++ * reserves the bottom of the panel it stands on instead: the windows tiled
++ * on that panel are made that much shorter (phoc_view_get_tiled_box), and
++ * those on the other panel are left as they are.
++ *
++ * Returns: whether the reservations changed
++ */
++static gboolean
++update_panel_bottom (PhocOutput *output)
++{
++  PhocOutputConfig *oc;
++  PhocLayerSurface *layer_surface;
++  int bottom[2] = { 0, 0 };
++  int width, height;
++
++  oc = phoc_config_get_output (phoc_server_get_config (phoc_server_get_default ()), output);
++  wlr_output_effective_resolution (output->wlr_output, &width, &height);
++
++  if (oc && oc->seam > 0) {
++    wl_list_for_each (layer_surface, &output->layer_surfaces, link) {
++      struct wlr_layer_surface_v1_state *state = &layer_surface->layer_surface->current;
++      uint32_t anchor = state->anchor;
++      gboolean left = !!(anchor & ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT);
++      gboolean right = !!(anchor & ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT);
++      int zone, half;
++
++      if (!phoc_layer_surface_get_mapped (layer_surface) || state->exclusive_zone <= 0)
++        continue;
++      if (!(anchor & ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM) ||
++          (anchor & ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP) || left == right)
++        continue;
++
++      /* what it asks for, not where its slide has got to: the windows are
++       * resized once, not on every frame of the keyboard coming up */
++      zone = state->exclusive_zone;
++      half = layer_surface->geo.x + layer_surface->geo.width / 2 < width / 2 ? 0 : 1;
++      bottom[half] = MAX (bottom[half], zone);
++    }
++  }
++
++  if (bottom[0] == output->panel_bottom[0] && bottom[1] == output->panel_bottom[1])
++    return FALSE;
++
++  g_debug ("Panel bottoms reserved: left %d, right %d", bottom[0], bottom[1]);
++  output->panel_bottom[0] = bottom[0];
++  output->panel_bottom[1] = bottom[1];
++  return TRUE;
++}
++
+ /**
+  * phoc_layer_shell_arrange:
+  * @output: The output to arrange
+@@ -307,6 +361,7 @@ phoc_layer_shell_arrange (PhocOutput *output)
+     sent_configure |= arrange_layer (output, seats, layers[i], &usable_area, true);
+ 
+   usable_area_changed = memcmp (&output->usable_area, &usable_area, sizeof (output->usable_area));
++  usable_area_changed |= update_panel_bottom (output);
+   if (usable_area_changed) {
+     g_debug ("Usable area changed, rearranging views");
+     output->usable_area = usable_area;
+diff --git a/src/output.h b/src/output.h
+index f1a0814..d31d944 100644
+--- a/src/output.h
++++ b/src/output.h
+@@ -60,6 +60,10 @@ struct _PhocOutput {
+   struct wl_list            layer_surfaces; // PhocLayerSurface::link
+ 
+   struct wlr_box            usable_area;
++  /* On an output with a tiling-seam: what a surface standing on one panel
++   * only - the keyboard, one panel wide - reserves at that panel's bottom,
++   * left and right panel, in layout pixels */
++  int                       panel_bottom[2];
+   int                       lx, ly;
+ 
+   struct wl_listener        commit;
+diff --git a/src/view.c b/src/view.c
+index 6795229..24635ee 100644
+--- a/src/view.c
++++ b/src/view.c
+@@ -832,7 +832,10 @@ phoc_view_get_tiled_box (PhocView               *self,
+   box->x = x / priv->scale;
+   box->y = usable_area.y / priv->scale;
+   box->width = width / priv->scale;
+-  box->height = usable_area.height / priv->scale;
++  /* what a surface standing on this panel only reserves at its bottom (the
++   * keyboard, see update_panel_bottom in layer-shell.c) */
++  box->height = (usable_area.height -
++                 (seam ? output->panel_bottom[dir == PHOC_VIEW_TILE_LEFT ? 0 : 1] : 0)) / priv->scale;
+ 
+   return TRUE;
+ }
+@@ -1317,6 +1320,15 @@ view_place_fitted (PhocView *self, const struct wlr_box *box)
+ 
+   phoc_view_get_geometry (self, &geom);
+   x = box->x * s + (box->width * s - geom.width * s) / 2.0 - geom.x * s;
++  /* Its scale comes from its width; its height is asked for, to fill the
++   * box: a box made shorter - the keyboard up on this panel - lifts the
++   * window's bottom over the keyboard at the same scale, rather than
++   * centring the window with its bottom still under it. */
++  if (geom.height != box->height && !phoc_view_is_fullscreen (self)) {
++    y = box->y * s - geom.y * s;
++    phoc_view_move_resize (self, x / s, y / s, geom.width, box->height);
++    return TRUE;
++  }
+   y = box->y * s + (box->height * s - geom.height * s) / 2.0 - geom.y * s;
+   phoc_view_move (self, x / s, y / s);
+   return TRUE;
+-- 
+2.43.0
+

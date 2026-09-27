@@ -16,8 +16,17 @@
 # Same mechanics as sfduo-phosh-install: a marker keeps a restore through the
 # package's postinst, --patched removes it.
 set -e
-OURS=/usr/lib/sfduo/phoc/phoc
-WANT=$(cat /usr/lib/sfduo/phoc/version 2>/dev/null || true)
+# One build per Droidian release, each in a directory named after the
+# exact phoc version it was built for (101 and 102 for 0.20); packages
+# before 0.20 had one build with its version in a file beside it.
+HAVE=$(dpkg-query -W -f='${Version}' phoc 2>/dev/null || true)
+if [ -n "$HAVE" ] && [ -f "/usr/lib/sfduo/phoc/$HAVE/phoc" ]; then
+    OURS=/usr/lib/sfduo/phoc/$HAVE/phoc
+    WANT=$HAVE
+else
+    OURS=/usr/lib/sfduo/phoc/phoc
+    WANT=$(cat /usr/lib/sfduo/phoc/version 2>/dev/null || true)
+fi
 BIN=/usr/bin/phoc
 STOCK=/usr/bin/phoc.stock
 KEEP_STOCK=/etc/sfduo/phoc-stock
@@ -53,7 +62,6 @@ case "$1" in
 esac
 
 [ -f "$OURS" ] && [ -n "$WANT" ] || { echo "sfduo-phoc: no patched binary in this package"; exit 0; }
-HAVE=$(dpkg-query -W -f='${Version}' phoc 2>/dev/null || true)
 if [ "$HAVE" != "$WANT" ]; then
     echo "sfduo-phoc: phoc is $HAVE, the patched binary is for $WANT - left alone;"
     echo "sfduo-phoc: tiled windows reach half the hinge into the bezel on this phoc"

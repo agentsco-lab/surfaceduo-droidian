@@ -1,0 +1,318 @@
+From 88ce5d1dbc0f32f1eedac77aaa8e9b2c93cb932e Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+Date: Sat, 26 Sep 2026 14:15:22 +0300
+Subject: [PATCH] view-ghost: a move to the other panel turns like a page about
+ the hinge
+
+The window's picture turns about the seam in 48 strips drawn in
+perspective, the far edge dimmed as it stands edge on, and lands on the
+other panel face up (#239): 420 ms, the eye 1.6 widths away, dimmed to 0.6.
+$XDG_RUNTIME_DIR/sfduo-move ("<ms> <camera> <dim>", "0 0 0" for the old
+straight slide) overrides them at each move.
+---
+ src/sfduo-control.c |  45 +++++++++++++++-
+ src/view-ghost.c    | 128 +++++++++++++++++++++++++++++++++++++++++---
+ src/view-ghost.h    |  15 +++++-
+ 3 files changed, 180 insertions(+), 8 deletions(-)
+
+diff --git a/src/sfduo-control.c b/src/sfduo-control.c
+index 89c80c9..daf915c 100644
+--- a/src/sfduo-control.c
++++ b/src/sfduo-control.c
+@@ -172,6 +172,43 @@ view_is_held (PhocView *view)
+  */
+ #define SFDUO_SLIDE_MS 260   /* PHOC_ANIM_DURATION_WINDOW_MOVE, the ghost's */
+ 
++/* The move to the other panel turned like a page about the hinge (#239):
++ * how long, how far the eye is (in the window's widths) and how dark the far
++ * edge gets, as tried on the device on 2026-09-25. $XDG_RUNTIME_DIR/sfduo-move
++ * ("<ms> <camera> <dim>", "0 0 0" for a straight slide) overrides them at
++ * every move, to try other numbers without restarting the session. */
++#define SFDUO_TURN_MS 420
++#define SFDUO_TURN_CAMERA 1.6
++#define SFDUO_TURN_DIM 0.6
++
++static gboolean
++move_turn (PhocViewGhostTurn *turn, guint *ms)
++{
++  g_autofree char *path = g_build_filename (g_get_user_runtime_dir (), "sfduo-move", NULL);
++  g_autofree char *text = NULL;
++  char *end = NULL;
++  guint64 m;
++  double camera, dim;
++
++  *ms = SFDUO_TURN_MS;
++  turn->camera = SFDUO_TURN_CAMERA;
++  turn->dim = SFDUO_TURN_DIM;
++  if (!g_file_get_contents (path, &text, NULL, NULL))
++    return TRUE;
++  m = g_ascii_strtoull (text, &end, 10);
++  if (m == 0) {
++    *ms = SFDUO_SLIDE_MS;
++    return FALSE;
++  }
++  camera = g_ascii_strtod (end, &end);          /* not the locale's decimal comma */
++  dim = g_ascii_strtod (end, NULL);
++  if (m < 50 || m > 3000 || camera < 0.2 || camera > 20.0 || dim < 0.0 || dim > 1.0)
++    return TRUE;                                /* nonsense: the defaults */
++  *ms = m;
++  turn->camera = camera;
++  turn->dim = dim;
++  return TRUE;
++}
+ #define PHOC_TYPE_SFDUO_SLIDE (phoc_sfduo_slide_get_type ())
+ G_DECLARE_FINAL_TYPE (PhocSfduoSlide, phoc_sfduo_slide, PHOC, SFDUO_SLIDE, GObject)
+ 
+@@ -360,7 +397,13 @@ tile_view (PhocView *view, PhocViewTileDirection dir)
+     to.x = tiled.x * scale;
+     to.y = tiled.y * scale;
+     phoc_view_tile (view, dir, NULL);
+-    phoc_view_ghost_move (view, &from, &to);
++    {
++      PhocViewGhostTurn turn;
++      guint ms;
++      gboolean turned = move_turn (&turn, &ms);
++
++      phoc_view_ghost_move (view, &from, &to, turned ? &turn : NULL, ms);
++    }
+     return;
+   }
+ 
+diff --git a/src/view-ghost.c b/src/view-ghost.c
+index ec0c567..25d3baa 100644
+--- a/src/view-ghost.c
++++ b/src/view-ghost.c
+@@ -17,6 +17,7 @@
+ #include "view-ghost.h"
+ 
+ #include <wlr/types/wlr_buffer.h>
++#include <math.h>
+ #include <wlr/types/wlr_compositor.h>
+ #include <wlr/types/wlr_output.h>
+ #include <wlr/util/transform.h>
+@@ -66,6 +67,8 @@ struct _PhocViewGhost {
+   float                     progress;   /* 0 as the window was .. 1 gone */
+   /* moving: where the window is going, and the window, hidden meanwhile */
+   struct wlr_box            to;
++  gboolean                  turn;       /* turned about the hinge like a page (#239) */
++  PhocViewGhostTurn         turning;
+   PhocView                 *view;
+ };
+ 
+@@ -286,12 +289,12 @@ on_output_destroyed (gpointer data, GObject *where_the_object_was)
+  * while the view is still mapped and its surface still has its buffer.
+  */
+ static PhocViewGhost *ghost_new (PhocView *view, PhocViewGhostKind kind,
+-                                  const struct wlr_box *to);
++                                  const struct wlr_box *to, guint duration_ms);
+ 
+ void
+ phoc_view_ghost_leave (PhocView *view, PhocViewGhostKind kind)
+ {
+-  ghost_new (view, kind, NULL);
++  ghost_new (view, kind, NULL, 0);
+ }
+ 
+ 
+@@ -300,21 +303,28 @@ phoc_view_ghost_leave (PhocView *view, PhocViewGhostKind kind)
+  * @view: A view that has just been told to go elsewhere
+  * @from: where its surface was, in layout coordinates
+  * @to: where its surface is going
++ * @turn: turned about the hinge like a page, or %NULL to slide straight
++ * @duration_ms: how long the journey takes, 0 for the usual
+  *
+  * A window put on the other panel jumped there in a frame. Its last
+  * buffer slides from @from to @to instead, and the window itself is not
+  * drawn until the ghost has arrived.
+  */
+ void
+-phoc_view_ghost_move (PhocView *view, const struct wlr_box *from, const struct wlr_box *to)
++phoc_view_ghost_move (PhocView *view, const struct wlr_box *from, const struct wlr_box *to,
++                      const PhocViewGhostTurn *turn, guint duration_ms)
+ {
+   PhocViewGhost *self;
+ 
+   if (from->x == to->x && from->y == to->y)
+     return;
+-  self = ghost_new (view, PHOC_VIEW_GHOST_MOVE, to);
++  self = ghost_new (view, PHOC_VIEW_GHOST_MOVE, to, duration_ms);
+   if (self == NULL)
+     return;
++  if (turn) {
++    self->turn = TRUE;
++    self->turning = *turn;
++  }
+   self->box = *from;
+   self->view = view;
+   g_object_add_weak_pointer (G_OBJECT (view), (gpointer *) &self->view);
+@@ -323,7 +333,8 @@ phoc_view_ghost_move (PhocView *view, const struct wlr_box *from, const struct w
+ 
+ 
+ static PhocViewGhost *
+-ghost_new (PhocView *view, PhocViewGhostKind kind, const struct wlr_box *to)
++ghost_new (PhocView *view, PhocViewGhostKind kind, const struct wlr_box *to,
++           guint duration_ms)
+ {
+   PhocDesktop *desktop = phoc_server_get_desktop (phoc_server_get_default ());
+   g_autoptr (PhocTimedAnimation) anim = NULL;
+@@ -403,7 +414,8 @@ ghost_new (PhocView *view, PhocViewGhostKind kind, const struct wlr_box *to)
+   phoc_property_easer_set_props (easer, "progress", 0.0, 1.0, NULL);
+   anim = g_object_new (PHOC_TYPE_TIMED_ANIMATION,
+                        "animatable", output,
+-                       "duration", kind == PHOC_VIEW_GHOST_MINIMIZE ?
++                       "duration", duration_ms ? duration_ms :
++                                   kind == PHOC_VIEW_GHOST_MINIMIZE ?
+                                    PHOC_ANIM_DURATION_WINDOW_MINIMIZE :
+                                    kind == PHOC_VIEW_GHOST_MOVE ?
+                                    PHOC_ANIM_DURATION_WINDOW_MOVE :
+@@ -424,6 +436,9 @@ ghost_new (PhocView *view, PhocViewGhostKind kind, const struct wlr_box *to)
+  *
+  * Draw the ghosts that are on @output.
+  */
++static void render_turn (PhocViewGhost *self, PhocOutput *output, PhocRenderContext *ctx);
++
++
+ void
+ phoc_view_ghosts_render (PhocOutput *output, PhocRenderContext *ctx)
+ {
+@@ -439,6 +454,13 @@ phoc_view_ghosts_render (PhocOutput *output, PhocRenderContext *ctx)
+     if (self->output != output || self->buffer->texture == NULL)
+       continue;
+ 
++    if (self->kind == PHOC_VIEW_GHOST_MOVE && self->turn &&
++        wlr_output->transform == WL_OUTPUT_TRANSFORM_NORMAL &&
++        self->transform == WL_OUTPUT_TRANSFORM_NORMAL) {
++      render_turn (self, output, ctx);
++      continue;
++    }
++
+     place (self, &dst, &alpha);
+     if (alpha <= 0.0)
+       continue;
+@@ -467,3 +489,97 @@ phoc_view_ghosts_render (PhocOutput *output, PhocRenderContext *ctx)
+     pixman_region32_fini (&region);
+   }
+ }
++
++
++#define TURN_STRIPS 48
++
++/*
++ * A window moved to the other panel, turned over like a page (#239). The
++ * seam between the panels is the axis: the page's edge by the seam stays
++ * there, its far edge falls back into the phone, and at a quarter turn the
++ * page stands edge on and is gone; it comes out of the depth on the other
++ * side and lies down on the other panel. Past the quarter turn the page is
++ * the window as it arrives, not its mirror image - the same window on both
++ * faces, as a card.
++ *
++ * The renderer draws flat rectangles only, so the page is drawn in narrow
++ * upright strips, each as tall as perspective makes that distance from the
++ * axis, and each dimmed by how far it has gone back.
++ */
++static void
++render_turn (PhocViewGhost *self, PhocOutput *output, PhocRenderContext *ctx)
++{
++  struct wlr_output *wlr_output = output->wlr_output;
++  float sc = wlr_output->scale;
++  float p = self->progress;
++  struct wlr_box page;
++  double seam, angle, near, far, eye, cy, edge[TURN_STRIPS + 1], height[TURN_STRIPS + 1];
++  gboolean to_left = self->to.x < self->box.x, beyond;
++
++  seam = to_left ? (self->to.x + self->to.width + self->box.x) / 2.0 :
++                   (self->box.x + self->box.width + self->to.x) / 2.0;
++  if (p < 0.5) {
++    page = self->box;
++    angle = G_PI * p;
++  } else {
++    page = self->to;
++    angle = G_PI * (1.0 - p);
++  }
++  /* which side of the axis the page lies on, and its two edges' distances */
++  beyond = page.x + page.width / 2.0 >= seam;
++  near = beyond ? page.x - seam : seam - (page.x + page.width);
++  far = near + page.width;
++  eye = self->turning.camera * page.width;
++  cy = page.y + page.height / 2.0;
++
++  for (int i = 0; i <= TURN_STRIPS; i++) {
++    double d = near + (far - near) * i / TURN_STRIPS;
++    double s = eye / (eye + d * sin (angle));      /* farther back: smaller */
++
++    edge[i] = seam + (beyond ? 1 : -1) * d * cos (angle) * s;
++    height[i] = page.height * s;
++  }
++
++  for (int i = 0; i < TURN_STRIPS; i++) {
++    double u0 = (double) i / TURN_STRIPS, u1 = (double) (i + 1) / TURN_STRIPS;
++    /* the texture runs from the window's left edge; by the axis is its
++     * left edge when it lies beyond the seam, its right edge before it */
++    double t0 = beyond ? u0 : 1.0 - u1, t1 = beyond ? u1 : 1.0 - u0;
++    double h = (height[i] + height[i + 1]) / 2.0;
++    int xa = (int) round ((MIN (edge[i], edge[i + 1]) - output->lx) * sc);
++    int xb = (int) round ((MAX (edge[i], edge[i + 1]) - output->lx) * sc);
++    struct wlr_box dst = {
++      .x = xa,
++      .y = (int) round ((cy - h / 2.0 - output->ly) * sc),
++      .width = xb - xa,
++      .height = (int) round (h * sc),
++    };
++    struct wlr_fbox src = self->src_box;
++    pixman_region32_t region;
++    struct wlr_box clip = dst;
++    float dim = self->turning.dim * sin (angle) * (0.35 + 0.65 * (u0 + u1) / 2.0);
++
++    if (dst.width <= 0 || dst.height <= 0)
++      continue;
++    src.x = self->src_box.x + self->src_box.width * t0;
++    src.width = self->src_box.width * (t1 - t0);
++    if (!phoc_utils_is_damaged (&dst, ctx->damage, &clip, &region)) {
++      pixman_region32_fini (&region);
++      continue;
++    }
++    wlr_render_pass_add_texture (ctx->render_pass, &(struct wlr_render_texture_options) {
++        .texture = self->buffer->texture,
++        .src_box = src,
++        .dst_box = dst,
++        .clip = &region,
++        .filter_mode = phoc_output_get_texture_filter_mode (output),
++      });
++    if (dim > 0.005)
++      wlr_render_pass_add_rect (ctx->render_pass, &(struct wlr_render_rect_options) {
++          .box = dst,
++          .color = { .r = 0, .g = 0, .b = 0, .a = dim },
++          .clip = &region,
++        });
++    pixman_region32_fini (&region);
++  }
++}
+diff --git a/src/view-ghost.h b/src/view-ghost.h
+index 71964fc..5848a5b 100644
+--- a/src/view-ghost.h
++++ b/src/view-ghost.h
+@@ -30,7 +30,20 @@ typedef enum {
+ } PhocViewGhostKind;
+ 
+ void   phoc_view_ghost_leave      (PhocView *view, PhocViewGhostKind kind);
+-void   phoc_view_ghost_move       (PhocView *view, const struct wlr_box *from, const struct wlr_box *to);
++/**
++ * PhocViewGhostTurn:
++ * @camera: how far the eye is from the screen, in the window's widths
++ * @dim: how dark the far edge gets when the page stands edge on
++ *
++ * A move to the other panel turned like a page about the hinge (#239).
++ */
++typedef struct {
++  float camera;
++  float dim;
++} PhocViewGhostTurn;
++
++void   phoc_view_ghost_move       (PhocView *view, const struct wlr_box *from, const struct wlr_box *to,
++                                   const PhocViewGhostTurn *turn, guint duration_ms);
+ void   phoc_view_ghosts_render    (PhocOutput *output, PhocRenderContext *ctx);
+ 
+ G_END_DECLS
+-- 
+2.43.0
+
