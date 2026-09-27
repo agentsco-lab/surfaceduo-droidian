@@ -75,8 +75,12 @@ Not yet measured the same way on the port.
 
 | | Duo 1 | Duo 2 |
 |---|---|---|
-| Boot, kernel start to the lock screen | 13.75 s | 11.7 s |
+| Boot, kernel start to the lock screen | 13.75 s (median of 5) | 11.7 s and 30.7 s (2 boots) |
 | Screen lit after the power key | ~545 ms | ~480 ms |
+
+The Duo 2's first boot, 30.7 s, came after the phone had been up for three
+days; the second, 11.7 s, right after it. The Duo 1 booted five times in a row,
+13.3-15.0 s.
 
 The port's boot is in the top-level README: about two minutes from a reboot
 to an ssh login on the debug kernel, 40-50 s on the perf kernel.
