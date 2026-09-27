@@ -92,6 +92,18 @@ announce `BTN_TOOL_PEN`, which is what libinput needs to expose it as a
 tablet tool. `ABS_MT_TOUCH_MAJOR` on the finger side is also the raw
 material for palm rejection, which does not exist on this port today.
 
-Note that the splitter has to `EVIOCGRAB` the original node, so a crash
-takes all input with it. Whoever builds this should treat the watchdog
-as part of the job.
+Note that the splitter has to `EVIOCGRAB` the original node. The grab
+belongs to the open file: when the process dies the kernel lets go of it
+and the node reaches the compositor again as before, so a crash costs the
+pen, not touch.
+
+## Done (2026-09-26, Droidian 102)
+
+`adaptation/system/sfduo-pen-split` (the `sfduo-pen-split` service) does
+the above: it grabs `surface_touchscreen` and writes `sfduo touchscreen`
+(the fingers, `ID_INPUT_TOUCHSCREEN`) and `sfduo pen` (`BTN_TOOL_PEN` /
+`BTN_TOOL_RUBBER`, `BTN_TOUCH`, `BTN_STYLUS`, `ABS_X` / `ABS_Y` with the
+panel's resolution, `ABS_PRESSURE`; `ID_INPUT_TABLET`). libinput takes the
+pen as a tablet tool, and GTK's stylus gesture gets its pressure: the pen
+sheet right of the right panel (`sfduo-pen-screen`) draws with the pen
+only. It needs `python3-evdev`, which the package now recommends.

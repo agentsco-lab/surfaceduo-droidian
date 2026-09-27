@@ -108,7 +108,11 @@ def output_size():
 
 
 SCREEN_WIDTH, SCREEN_HEIGHT = output_size()
-STAGE_HEIGHT = SCREEN_HEIGHT - PANEL_HEIGHT   # everything below the top bar
+# The grid's stage: the panel's whole height. It stopped below phosh's top bar
+# while there was one; the bar is folded out of sight now (#96), and the strip
+# left above the grid showed the wallpaper through once the wallpaper reached
+# the top (phosh-patches/0021) - the curtain had the same strip (#181).
+STAGE_HEIGHT = SCREEN_HEIGHT
 EDGE = 36                 # the gesture band along the bottom of a busy panel: 4.5 mm,
                           # taken from the app beneath - 22 was missed by the thumb
 EDGE_MARGIN = 10          # a half's distance from its panel's outer edge when apart
@@ -161,6 +165,9 @@ TERMINALS = {"cool-retro-term", "org.gnome.Console", "kgx", "org.gnome.Terminal"
 # in the wrong corner on the right panel - and for anything opened as a page
 # over another window (the Follow map), which is the same thing.
 BACK_APPS = {"org.sfduo.Settings", "org.gnome.Settings", "mobi.phosh.MobileSettings"}
+PORT_SETTINGS = "org.sfduo.Settings.desktop"   # the one Settings (sfduo-settings, #78)
+# ... whose pages are these programs' windows (sfduo-one-column)
+SETTINGS_PAGES = {"org.gnome.Settings", "mobi.phosh.MobileSettings"}
 WATCH_MS = 500            # how often to ask which windows are open, unless told sooner
 # Told by the shell (WindowsChanged) that a window came or went, the dock
 # looks again this long after: half of phoc's close and minimize motions, so
@@ -200,7 +207,10 @@ viewport { background-color: transparent; }
 /* Apart - one half at each panel's outer edge, under the thumbs - each is
    a rounded slab of its own. Joined on one panel they are square where they
    meet, so the two read as one bar. */
-.dock-pane { border-radius: 20px; }
+.dock-pane { border-radius: 20px; transition: background-color 200ms ease-out; }
+/* Changing the dock's apps (#203): the halves in the accent's colour
+   (Dock._accent_css; this is the fallback). */
+.dock-pane.editing { background-color: rgba(53,132,228,0.55); }
 .dock-pane.joined.left  { border-radius: 20px 0 0 20px; padding-right: 4px; }
 .dock-pane.joined.right { border-radius: 0 20px 20px 0; padding-left: 4px; }
 .dock-button {
@@ -216,6 +226,10 @@ viewport { background-color: transparent; }
   border-radius: 14px;
 }
 .running-dot { color: #e8e4d9; font-size: 9px; margin-bottom: 1px; }
+/* A long press in the grid: one choice over the icon (#203). */
+popover.grid-menu { background-color: rgba(40,40,44,0.97); border-radius: 14px; padding: 4px; }
+.grid-menu-item { color: #e8e4d9; padding: 10px 18px; font-size: 15px; background: none; border: none; box-shadow: none; }
+.grid-menu-item:active, .grid-menu-item:hover { background-color: rgba(255,255,255,0.12); border-radius: 10px; }
 /* Back from the edge: a round arrow that comes out with the finger and turns
    blue once letting go would go back. */
 .edge-back {
@@ -307,19 +321,54 @@ def debug(message):
 
 
 def favourites():
-    """The apps on the dock: our own list if there is one, else the shell's."""
+    """The apps on the dock, as two lists of desktop ids: the left half's and
+    the right half's (#203). Which half an app is in is the panel it opens
+    on. Kept in CONFIG as {"left": [...], "right": [...]}, written by the
+    dock when its apps are changed on the device; before that, the list the
+    file had ("apps") or the shell's favourites, cut in two."""
     try:
         with open(CONFIG) as fp:
-            ids = json.load(fp)["apps"]
-    except (OSError, ValueError, KeyError):
-        ids = list(Gio.Settings.new("sm.puri.phosh").get_strv("favorites"))
+            config = json.load(fp)
+    except (OSError, ValueError):
+        config = {}
+    if isinstance(config.get("left"), list) or isinstance(config.get("right"), list):
+        halves = [list(config.get("left") or []), list(config.get("right") or [])]
+    else:
+        ids = config.get("apps") if isinstance(config.get("apps"), list) else None
+        if ids is None:
+            ids = list(Gio.Settings.new("sm.puri.phosh").get_strv("favorites"))
+        cut = (len(ids) + 1) // 2
+        halves = [ids[:cut], ids[cut:]]
 
-    apps = []
-    for app_id in ids:
-        info = desktop_info(app_id)
-        if info is not None:
-            apps.append(info)
-    return apps
+    # GNOME Settings is not a way in on this port: its list of pages is
+    # replaced by one button back to the port's Settings (sfduo-one-column),
+    # and opened on its own it shows an empty page under that button. The
+    # favourites can still name it - Droidian's default does, and on 102 it
+    # is written into the user's own settings, above the package's - so it
+    # stands for the port's Settings wherever that is installed.
+    if desktop_info(PORT_SETTINGS) is not None:
+        halves = [[PORT_SETTINGS if app_id == "org.gnome.Settings.desktop" else app_id
+                   for app_id in half] for half in halves]
+    # an app gone from the system leaves the dock without a word
+    return [[app_id for app_id in half if desktop_info(app_id) is not None] for half in halves]
+
+
+def save_favourites(left, right):
+    """Keep the dock's apps as they were left on the device."""
+    try:
+        with open(CONFIG) as fp:
+            config = json.load(fp)
+    except (OSError, ValueError):
+        config = {}
+    config.pop("apps", None)
+    config["left"], config["right"] = list(left), list(right)
+    try:
+        os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
+        with open(CONFIG + ".tmp", "w") as fp:
+            json.dump(config, fp, indent=1)
+        os.replace(CONFIG + ".tmp", CONFIG)
+    except OSError as err:
+        print(f"sfduo-dock: {CONFIG}: {err}", file=sys.stderr)
 
 
 def load_app_ids():
@@ -492,6 +541,15 @@ class GridPanel(Gtk.Window):
         self.drag.connect("cancel", dock._on_drag_cancel)
 
     SETTLE_MS = 600                     # after the last step: every motion is over
+
+    def park(self):
+        """Mapped below the screen at the dock's start, drawn there once, so
+        that the first opening is like every other (#186): the grid was
+        shown for the first time by that opening, realized and drawn whole
+        inside its first frames - five of them lost, one 105 ms late."""
+        if not self.get_mapped() and not self.get_visible():
+            GtkLayerShell.set_margin(self, GtkLayerShell.Edge.BOTTOM, -STAGE_HEIGHT)
+            self.show_all()
 
     def place(self, progress):
         """Where the grid is: 0 parked below the screen, 1 all the way up.
@@ -828,10 +886,47 @@ class PaneWindow(Gtk.Window):
         self.drag = Gtk.GestureDrag.new(self)
         self.drag.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         self.drag.set_touch_only(True)
-        self.drag.connect("drag-begin", lambda g, x, y: dock._begin_drag(dock._panel_of_pane(self)))
-        self.drag.connect("drag-update", dock._on_drag_update)
-        self.drag.connect("drag-end", dock._on_drag_end)
-        self.drag.connect("cancel", dock._on_drag_cancel)
+        self.drag.connect("drag-begin", self._drag_begin)
+        self.drag.connect("drag-update", self._drag_update)
+        self.drag.connect("drag-end", self._drag_end)
+        self.drag.connect("cancel", self._drag_cancel)
+        self.editing_drag = False
+
+    # While the dock's apps are being changed (#203) a finger on a half is
+    # about its icons - moved, swiped up and away, swiped down to finish -
+    # and not a swipe for the grid.
+    def _drag_begin(self, gesture, x, y):
+        self.editing_drag = bool(getattr(self.dock, "editing", False))
+        if self.editing_drag:
+            self.dock._edit_begin(self, x, y)
+        else:
+            self.dock._begin_drag(self.dock._panel_of_pane(self))
+
+    def _drag_update(self, gesture, dx, dy):
+        if self.editing_drag:
+            self.dock._edit_update(self, dx, dy)
+        else:
+            self.dock._on_drag_update(gesture, dx, dy)
+
+    def _drag_end(self, gesture, dx, dy):
+        if self.editing_drag:
+            self.dock._edit_end(self, dx, dy)
+        else:
+            self.dock._on_drag_end(gesture, dx, dy)
+            self._lifted()
+
+    def _drag_cancel(self, gesture, sequence):
+        if self.editing_drag:
+            self.dock._edit_end(self, 0, 0)
+        else:
+            self.dock._on_drag_cancel(gesture, sequence)
+            self._lifted()
+
+    def _lifted(self):
+        """The finger that long-pressed an icon is off: the editor can take
+        the icons now (see Dock._edit)."""
+        if getattr(self.dock, "editing", False):
+            GLib.idle_add(self.dock._edit_build)
 
     def passthrough(self, on):
         """Take no touches at all, or take them across the whole half.
@@ -1027,14 +1122,35 @@ class DesktopClock(Gtk.Window):
         move is a commit, and the compositor has work of its own to do."""
         if (left, width) == getattr(self, "placed_at", None):
             return
+        was = getattr(self, "placed_at", None)
         self.placed_at = (left, width)
+        if getattr(self, "crossing", None) is not None:
+            GLib.source_remove(self.crossing)
+            self.crossing = None
         if left is None:
             self.hide()
             return
         self.set_size_request(width, -1)
-        self.x, self.y = left, int(SCREEN_HEIGHT * self.TOP)
-        self._move()
-        self.show_all()
+        self.y = int(SCREEN_HEIGHT * self.TOP)
+        if was is None or was[0] is None or not self.get_mapped():
+            self.x = left
+            self._move()
+            self.show_all()
+            return
+        # From one panel to the other it goes with the dock, in the dock's
+        # time and ease; set in one step it jumped across while the dock
+        # was still on its way.
+        x0 = self.x
+
+        def step(t):
+            k = min(1.0, t / MOVE_MS)
+            self.x = int(round(x0 + (left - x0) * (1.0 - (1.0 - k) ** 3)))
+            self._move()
+            if k >= 1.0:
+                self.crossing = None
+                return False
+            return True
+        self.crossing = animate(step)
 
     def slide(self, p):
         """Slide off the right edge as the system screen comes in over the
@@ -1046,8 +1162,19 @@ class DesktopClock(Gtk.Window):
             self.slide_dx = dx
             self._move()
 
+    def shift(self, p, step):
+        """Go left with the strip of screens as the pen's sheet comes in over
+        the right panel: at p=1 the right desktop is on the left panel, and
+        the clock with it. On the left panel already, it is under the sheet's
+        way and goes off the left edge."""
+        dx = -int(round(p * step)) if p > 0 else 0
+        if dx != getattr(self, "shift_dx", 0):
+            self.shift_dx = dx
+            self._move()
+
     def _move(self):
-        x, y = self.x + self.dx + getattr(self, "slide_dx", 0), max(0, self.y + self.dy)
+        x = self.x + self.dx + getattr(self, "slide_dx", 0) + getattr(self, "shift_dx", 0)
+        y = max(0, self.y + self.dy)
         if not raw_margins(self, top=y, left=x):
             GtkLayerShell.set_margin(self, GtkLayerShell.Edge.TOP, y)
             GtkLayerShell.set_margin(self, GtkLayerShell.Edge.LEFT, x)
@@ -1293,8 +1420,7 @@ class Dock(Gtk.Window):
         # half an app sits in is therefore which panel it opens on.
         # No all-apps button: the swipe up across the strip is the way to
         # the grid, and without the button the dock fits a panel whole.
-        items = favourites()
-        cut = (len(items) + 1) // 2
+        self.fav = favourites()      # [left half's desktop ids, right half's]
 
         # Two halves, each a window of its own that always holds the same
         # buttons: with nothing open they sit one per panel, pushed against
@@ -1302,8 +1428,8 @@ class Dock(Gtk.Window):
         # panel is taken they sit side by side on the other one. Which panel
         # a tap opens onto is where the half is at that moment.
         self.panes = {
-            "left": PaneWindow(self, "left", self._pane("left", items[:cut])),
-            "right": PaneWindow(self, "right", self._pane("right", items[cut:])),
+            "left": PaneWindow(self, "left", self._pane("left", self.fav[0])),
+            "right": PaneWindow(self, "right", self._pane("right", self.fav[1])),
         }
         self.mode = "both"
         self.half = 1             # a panel's width and the hinge, from size-allocate
@@ -1319,6 +1445,7 @@ class Dock(Gtk.Window):
         self.back_buttons = {side: BackButton(self, side) for side in ("left", "right")}
         self.clock = DesktopClock()
         self.system_progress = 0.0    # the system screen's, as it says (#111)
+        self.pen_progress = 0.0       # the pen's sheet's, the same way
         self.system_dragging = False
         self.catchers = {side: SwipeCatcher(self, side) for side in ("left", "right")}
         self.catching = None          # the panel a finger on a catcher is on
@@ -1352,6 +1479,7 @@ class Dock(Gtk.Window):
         self._follow_keyboard()
         self._follow_shade()
         self._follow_system()
+        self._follow_pen()
         self._publish_placement()
         self.watch_wake = threading.Event()
         self._follow_windows()
@@ -1514,6 +1642,56 @@ class Dock(Gtk.Window):
         GLib.idle_add(self._apply_mode)
         self.watch_wake.set()
 
+    def _put_away(self, drag_app):
+        """A swipe up over a panel's window, off the main loop: the window
+        in front there, and the windows that follow it, minimized."""
+        if not drag_app.startswith("state:"):
+            drag_app = self._shown_on(self.placed.get(drag_app)) or drag_app
+        if drag_app.startswith("state:"):
+            subprocess.Popen(["wlrctl", "toplevel", "minimize", drag_app])
+            return
+        # The app and the windows that follow it on its panel go together:
+        # Settings with a GNOME Settings page open over it is two windows,
+        # and putting away only the one the swipe named - Settings, under
+        # the page - left the page standing, as if the swipe had done
+        # nothing. Whether a page is shown is asked of the compositor: what
+        # the dock last heard can be a page's window still put away that
+        # Settings has since brought back itself (it asks phoc, not the dock).
+        panel = self.placed.get(drag_app)
+        leader = getattr(self, "follow", {}).get(drag_app, drag_app)
+        group = [leader] + [a for a, lead in list(getattr(self, "follow", {}).items())
+                            if lead == leader and self.placed.get(a) == panel
+                            and subprocess.run(["wlrctl", "toplevel", "find", f"app_id:{a}",
+                                                "state:minimized"],
+                                               check=False).returncode != 0]
+        for app_id in dict.fromkeys(group):
+            subprocess.Popen(["wlrctl", "toplevel", "minimize", f"app_id:{app_id}"])
+
+        # ... and come back together, from the leader's icon. Only what the
+        # swipe put away: a page closed by its own back is minimized too,
+        # and has to stay closed.
+        def remember():
+            self.put_away_with = getattr(self, "put_away_with", {})
+            self.put_away_with[leader] = [a for a in group if a != leader]
+            return False
+        GLib.idle_add(remember)
+
+    def _shown_on(self, panel):
+        """The app whose window is in front on a panel, asked of the
+        compositor now. The first app placed there is not it: a swipe up
+        over Firefox put away Settings, minimized under it long before,
+        and Firefox stayed. Of the windows on the panel that are not put
+        away, the active one; else the last one placed there."""
+        def wlrctl(*match):
+            return subprocess.run(["wlrctl", "toplevel", "find", *match],
+                                  check=False).returncode == 0
+        shown = [a for a, p in self.placed.items()
+                 if p == panel and not wlrctl(f"app_id:{a}", "state:minimized")]
+        for app_id in shown:
+            if wlrctl(f"app_id:{app_id}", "state:active"):
+                return app_id
+        return shown[-1] if shown else None
+
     def _present(self, app_id):
         """Bring an app's windows out and to the front.
 
@@ -1655,9 +1833,12 @@ class Dock(Gtk.Window):
         one when both are, none when the dock is hidden (see DesktopClock)."""
         if not hasattr(self, "clock") or self.half <= 1:
             return
-        side = {"both": "right", "left": "left", "right": "right"}.get(self._mode_for(False))
+        side = {"both": "right", "left": "left", "right": "right"}.get(self._mode_for(False, pen=False))
         left = None if side is None else (0 if side == "left" else self.half + self.gap)
         self.clock.place(left, self.half)
+        # the pen's sheet moves the strip left: the right desktop, the clock
+        # on it, goes to the left panel with it
+        self.clock.shift(getattr(self, "pen_progress", 0.0), self.half + self.gap)
 
     def _placed_variant(self):
         return GLib.Variant("a{ss}", {k: v for k, v in self.placed.items()
@@ -1858,16 +2039,27 @@ class Dock(Gtk.Window):
         favourites_ = set()
         for pane in self.panes.values():
             favourites_.update(pane.slab.buttons)
+        # GNOME Settings or Mobile Settings running on their own - started
+        # from a terminal, or bare, not as a page of the port's Settings -
+        # are still the port's Settings to the eye: one gear, lit, and not a
+        # second gear beside it
+        shown_as = dict.fromkeys(running)
+        if desktop_info(PORT_SETTINGS) is not None:
+            port = PORT_SETTINGS.removesuffix(".desktop")
+            for app_id in SETTINGS_PAGES & set(running):
+                shown_as[port] = None
         for pane in self.panes.values():
             slab = pane.slab
             for app_id, button in slab.buttons.items():
-                button.dot.set_visible(app_id in running)
+                button.dot.set_visible(app_id in shown_as)
             for child in slab.running.get_children():
                 slab.running.remove(child)
             # A running app that is no favourite gets a button in the half
             # for the panel it was put on, wherever that half is right now.
             for app_id in sorted(running):
                 if app_id in favourites_ or self.placed.get(app_id, "right") != slab.side:
+                    continue
+                if app_id in SETTINGS_PAGES and desktop_info(PORT_SETTINGS) is not None:
                     continue
                 # a window opened by another app to follow it (Follow) is
                 # part of that app while it runs: GNOME Settings under the
@@ -1922,7 +2114,7 @@ class Dock(Gtk.Window):
         self.placed.pop(app_id, None)
         self._save_placed()
 
-    def _mode_for(self, grid_open, system=None):
+    def _mode_for(self, grid_open, system=None, pen=None):
         """Where the dock goes: the panel with nothing on it. A window the
         dock placed takes its panel, one it did not takes both - and the
         open grid takes the panel it is on, so the dock crosses to the other
@@ -1943,6 +2135,12 @@ class Dock(Gtk.Window):
             system = getattr(self, "system_progress", 0.0) >= SYSTEM_BUSY
         if system:
             busy.add("left")
+        # the pen's sheet takes the right one, the same way: the strip of
+        # screens - system, left desktop, right desktop, sheet - moved left
+        if pen is None:
+            pen = getattr(self, "pen_progress", 0.0) >= SYSTEM_BUSY
+        if pen:
+            busy.add("right")
         # the keyboard is a layer surface, not a window, and takes a panel
         # of its own (osk-patches/0001): while it is up that panel is taken
         if getattr(self, "osk_panel", None):
@@ -1979,6 +2177,11 @@ class Dock(Gtk.Window):
             # go with the grid's finger
             self._place_clock()
             self._drive(self._mode_for(False, system=False), self._mode_for(False, system=True), sp)
+            return False
+        pp = getattr(self, "pen_progress", 0.0)
+        if SYSTEM_BUSY <= pp < 1.0 and self.progress <= 0.0:
+            self._place_clock()
+            self._drive(self._mode_for(False, pen=False), self._mode_for(False, pen=True), pp)
             return False
         closed = self._mode_for(False)
         opened = self._mode_for(True)
@@ -2048,13 +2251,15 @@ class Dock(Gtk.Window):
         left, right = self.panes["left"], self.panes["right"]
         if mode == "hidden":            # below the edge, wherever it stands
             return {s: (p.x, -DOCK_HEIGHT) for s, p in self.panes.items()}
+        # As far off the bottom edge as a half apart is off its side edge: a
+        # slab standing on the edge had its rounded corners cut by the glass.
         if mode == "both":
-            return {"left": (EDGE_MARGIN, 0),
-                    "right": (2 * self.half + self.gap - right.width - EDGE_MARGIN, 0)}
+            return {"left": (EDGE_MARGIN, EDGE_MARGIN),
+                    "right": (2 * self.half + self.gap - right.width - EDGE_MARGIN, EDGE_MARGIN)}
         start = max(0, (self.half - left.width - right.width) // 2)
         if mode == "right":
             start += self.half + self.gap
-        return {"left": (start, 0), "right": (start + left.width, 0)}
+        return {"left": (start, EDGE_MARGIN), "right": (start + left.width, EDGE_MARGIN)}
 
     def _style_for(self, mode):
         """Square where the halves meet, rounded all round when apart."""
@@ -2239,10 +2444,14 @@ class Dock(Gtk.Window):
             # Not taken away for the grid: it lies above them and takes the
             # touches itself, and a catcher shown again uploaded its whole
             # 1350x1584 buffer as the grid came down (#148).
+            # - and over the left one while the pen's sheet is out: a swipe
+            # right there takes it back, and nothing on the sheet itself does
+            pen = getattr(self, "pen_progress", 0.0)
             catcher.set_active(getattr(self, "catching", None) == side or (
                 not self.locked and not self._shade_over(side)
-                and self._mode_for(False, system=False) in ("both", side)
-                and (system <= 0.0 or (side == "right" and system >= 1.0))))
+                and self._mode_for(False, system=False, pen=False) in ("both", side)
+                and (system <= 0.0 or (side == "right" and system >= 1.0))
+                and (pen <= 0.0 or (side == "left" and pen >= 1.0))))
 
     def _animate_to(self, target):
         """Finish the journey from wherever the grid is, easing out."""
@@ -2361,8 +2570,9 @@ class Dock(Gtk.Window):
         self.accent_css.load_from_data((
             ".corner-back { color: rgb(%s); }"
             ".dock-pane { background-color: rgba(%s,0.92); }"
+            ".dock-pane.editing { background-color: rgba(%s,0.55); }"
             ".running-dot { color: rgb(%s); }"
-            % (rgb, wash, rgb)).encode())
+            % (rgb, wash, rgb, rgb)).encode())
 
     def _back_tapped(self, side):
         """The corner arrow: the same thing the edge swipe ends in."""
@@ -2516,8 +2726,10 @@ class Dock(Gtk.Window):
             # is the far shade's list of windows and the application's own.
             if dy >= -SWIPE_PX:
                 return
-            target = self.drag_app if self.drag_app.startswith("state:") else f"app_id:{self.drag_app}"
-            subprocess.Popen(["wlrctl", "toplevel", "minimize", target])
+            # What is on the panel is asked of the compositor (wlrctl runs),
+            # on a thread: in the main loop they held the dock while the
+            # system was busy, as the keyboard's did (see _set_osk).
+            threading.Thread(target=self._put_away, args=(self.drag_app,), daemon=True).start()
             return
         # A flick decides by direction; a slow release, by which side of
         # halfway the grid was left on.
@@ -2573,17 +2785,106 @@ class Dock(Gtk.Window):
 
     # ---- a swipe from anywhere on an empty panel (#135) -------------------------
 
+    # ---- the pen's sheet, right of the right panel ----------------------------------
+    #
+    # sfduo-pen-screen: the system screen's mirror, at the other end of the
+    # strip of screens - system, left desktop, right desktop, sheet. A swipe
+    # left on either desktop, both free, moves the strip left: the sheet
+    # comes over the right panel, the right desktop - its half of the dock,
+    # the clock - goes to the left one. A swipe right there takes it back;
+    # the sheet itself is the pen's and answers no swipe. One end of the
+    # strip at a time: the sheet and the system screen are never out
+    # together.
+
+    PEN_NAME = "org.sfduo.PenScreen"
+    PEN_PATH = "/org/sfduo/PenScreen"
+
+    def _pen_call(self, method, args=None):
+        self.session_bus.call(self.PEN_NAME, self.PEN_PATH, self.PEN_NAME, method, args,
+                              None, Gio.DBusCallFlags.NO_AUTO_START, 1000, None, None)
+
+    def _follow_pen(self):
+        """The sheet says its progress as it moves; the dock and the clock go
+        with it, as they go with the system screen."""
+        self.session_bus.signal_subscribe(
+            self.PEN_NAME, "org.freedesktop.DBus.Properties", "PropertiesChanged",
+            self.PEN_PATH, None, Gio.DBusSignalFlags.NONE,
+            lambda _c, _s, _p, _i, _sig, params: self._on_pen_changed(params.unpack()[1]))
+        self.session_bus.signal_subscribe(
+            "org.freedesktop.DBus", "org.freedesktop.DBus", "NameOwnerChanged",
+            "/org/freedesktop/DBus", self.PEN_NAME, Gio.DBusSignalFlags.NONE,
+            lambda *_a: self._read_pen())
+
+    def _read_pen(self):
+        def got(bus, result):
+            try:
+                progress = bus.call_finish(result).unpack()[0]
+            except GLib.Error:
+                progress = 0.0
+            self._on_pen_changed({"Progress": float(progress)})
+        self.session_bus.call(self.PEN_NAME, self.PEN_PATH, "org.freedesktop.DBus.Properties",
+                              "Get", GLib.Variant("(ss)", (self.PEN_NAME, "Progress")), None,
+                              Gio.DBusCallFlags.NO_AUTO_START, 1000, None, got)
+
+    def _on_pen_changed(self, changed):
+        if "Progress" in changed:
+            self.pen_progress = float(changed["Progress"])
+            self._place_clock()
+            self._apply_mode()
+            self._shape()
+
+    def _pen_free(self):
+        """Whether the pen's sheet may come: both desktops free - the strip
+        moves them both - and the system screen, at the strip's other end,
+        not out."""
+        return (self._mode_for(False, system=False, pen=False) == "both"
+                and self.system_progress <= 0.0)
+
+    def _on_pen_drag_begin(self, back=False):
+        self.pen_back = back
+        self.pen_last = (GLib.get_monotonic_time(), 0.0)
+        self.pen_velocity = 0.0
+        if not back:
+            self._pen_call("Begin")
+
+    def _on_pen_drag_update(self, gesture, dx, _dy):
+        if gesture is not None and gesture.get_sequence_state(gesture.get_current_sequence()) != \
+                Gtk.EventSequenceState.CLAIMED:
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        now = GLib.get_monotonic_time()
+        then, last = self.pen_last
+        if now > then:
+            self.pen_velocity = (dx - last) / ((now - then) / 1000.0)      # px/ms
+        self.pen_last = (now, dx)
+        base = 1.0 if getattr(self, "pen_back", False) else 0.0
+        p = max(0.001, min(1.0, base - dx / max(1, self.half)))
+        self._pen_call("SetProgress", GLib.Variant("(d)", (p,)))
+
+    def _on_pen_drag_end(self, dx):
+        back = getattr(self, "pen_back", False)
+        p = (1.0 if back else 0.0) - dx / max(1, self.half)
+        if self.pen_velocity < -FLICK:
+            method = "Open"
+        elif self.pen_velocity > FLICK:
+            method = "Close"
+        else:
+            method = "Open" if p >= (SYSTEM_KEEP if back else SYSTEM_COMMIT) else "Close"
+        debug("pen sheet: release at %.2f, %.2f px/ms: %s" % (p, self.pen_velocity, method))
+        self._pen_call(method)
+
     def _system_free(self):
         """Whether the system screen may come: the left panel it takes has no
         window on it (#111)."""
-        return self._mode_for(False, system=False) in ("both", "left")
+        return (self._mode_for(False, system=False) in ("both", "left")
+                and getattr(self, "pen_progress", 0.0) <= 0.0)
 
     def _on_catch_begin(self, side):
         debug(f"touch on the {side} panel's desktop")
         self.catching = side
         self.catch_kind = None
         self.catch_system_out = self.system_progress >= 1.0
-        if not self.catch_system_out and self._system_free():
+        self.catch_pen_out = self.pen_progress >= 1.0
+        if not self.catch_system_out and not self.catch_pen_out and self._system_free():
             self._on_system_drag_begin(None, 0, 0)       # it wakes at the touch
 
     def _on_catch_update(self, side, gesture, dx, dy):
@@ -2601,11 +2902,22 @@ class Dock(Gtk.Window):
                     self.catch_kind = "system" if dx < 0 else "none"
                     if dx < 0:
                         self._on_system_drag_begin(None, 0, 0, back=True)
+                elif self.catch_pen_out:
+                    # the pen's sheet is out: right, on the left panel, takes
+                    # it back - the right desktop moving back to its place
+                    self.catch_kind = "pen" if dx > 0 else "none"
+                    if dx > 0:
+                        self._on_pen_drag_begin(back=True)
+                elif dx < 0 and self._pen_free():
+                    # left on either panel's desktop: the pen's sheet, the
+                    # system screen's mirror (a swipe right brings that one)
+                    self.catch_kind = "pen"
+                    self._on_pen_drag_begin()
                 else:
                     self.catch_kind = "system" if dx > 0 and self._system_free() else "none"
             else:
                 return
-            if self.catch_kind == "grid" and self.catch_system_out:
+            if self.catch_kind == "grid" and (self.catch_system_out or self.catch_pen_out):
                 self.catch_kind = "none"                 # no grid beside it
             debug(f"swipe on the {side} panel's desktop: {self.catch_kind}")
             if self.catch_kind != "system" and self.system_dragging:
@@ -2616,11 +2928,15 @@ class Dock(Gtk.Window):
                 gesture.set_state(Gtk.EventSequenceState.DENIED)
         if self.catch_kind == "system":
             self._on_system_drag_update(gesture, dx, dy)
+        elif self.catch_kind == "pen":
+            self._on_pen_drag_update(gesture, dx, dy)
         elif self.catch_kind == "grid":
             self._on_drag_update(gesture, dx, dy)
 
     def _on_catch_end(self, side, gesture, dx, dy):
         kind, self.catching, self.catch_kind = self.catch_kind, None, None
+        if kind == "pen":
+            self._on_pen_drag_end(dx)
         if kind == "system":
             self._on_system_drag_end(gesture, dx, dy)
         elif kind == "grid":
@@ -2632,6 +2948,8 @@ class Dock(Gtk.Window):
     def _on_catch_cancel(self, side):
         """The touch was taken: phoc dragging the shade, or the shell."""
         kind, self.catching, self.catch_kind = self.catch_kind, None, None
+        if kind == "pen":
+            self._pen_call("Close")
         if kind == "grid":
             self._on_drag_cancel(None, None)
         elif kind == "system" or self.system_dragging:
@@ -2742,13 +3060,17 @@ class Dock(Gtk.Window):
             "PropertiesChanged", None, "org.freedesktop.login1.Session",
             Gio.DBusSignalFlags.NONE, lambda *a: self._read_locked())
         # A signal that never comes is indistinguishable from a phone that is
-        # simply not locked, so ask as well.
-        GLib.timeout_add_seconds(2, self._read_locked)
+        # simply not locked, so ask as well - while the display is lit. Each
+        # ask wakes logind, and with the lid closed logind answers by reading
+        # every power supply, both fuel gauges over I2C (#235); in the dark
+        # the signals are enough, and the light asks again (_display_changed).
+        GLib.timeout_add_seconds(
+            2, lambda: getattr(self, "dark", False) or self._read_locked())
         self._read_locked()
 
     # ---- the keyboard ------------------------------------------------------
 
-    OSK_PANEL = "right"       # where the patched phosh-osk-stub puts itself in landscape
+    OSK_PANEL = "right"       # where the patched keyboard goes when no placed window is active
 
     def _follow_keyboard(self):
         """Know when the on-screen keyboard is up: it stood under the dock
@@ -2769,7 +3091,11 @@ class Dock(Gtk.Window):
 
     def _on_osk_changed(self, changed):
         if "Visible" in changed.keys():
-            self._set_osk(bool(changed["Visible"]))
+            self.osk_visible = bool(changed["Visible"])
+            self._set_osk(self.osk_visible)
+
+    def _osk_visible(self):
+        return bool(getattr(self, "osk_visible", False))
 
     def _read_osk(self):
         try:
@@ -2781,11 +3107,39 @@ class Dock(Gtk.Window):
             visible = bool(value[0])
         except GLib.Error:
             visible = False
+        self.osk_visible = visible
         self._set_osk(visible)
         return False
 
+    def _osk_side(self):
+        """The panel the patched keyboard stands on: that of the window being
+        typed into - the active one, where this dock placed it - as the
+        keyboard itself decides (osk-patches-stevia/0003); else the right."""
+        for app_id, side in self.placed.items():
+            if side in ("left", "right") and subprocess.run(
+                    ["wlrctl", "toplevel", "find", f"app_id:{app_id}", "state:active"],
+                    check=False).returncode == 0:
+                return side
+        return self.OSK_PANEL
+
     def _set_osk(self, visible):
-        panel = self.OSK_PANEL if visible else None
+        """The keyboard came up or went. Which panel it is on is asked of
+        the compositor (_osk_side, a wlrctl run per placed app) on a thread
+        of its own: asked here, in the main loop, it held the dock for two
+        seconds while Firefox was starting - its crossing to the other panel
+        drew two frames in 2026 ms."""
+        if not visible:
+            self._osk_on(None)
+            return
+
+        def ask():
+            side = self._osk_side()
+            GLib.idle_add(lambda: (self._osk_on(side), False)[1])
+        threading.Thread(target=ask, daemon=True).start()
+
+    def _osk_on(self, panel):
+        if panel is not None and not self._osk_visible():
+            return                  # gone again while it was being asked
         if panel == getattr(self, "osk_panel", None):
             return
         debug("keyboard %s" % ("up on the %s panel" % panel if panel else "down"))
@@ -2826,6 +3180,7 @@ class Dock(Gtk.Window):
         self.dark = mode != 0
         if not self.dark:
             self.watch_wake.set()
+            self._read_locked()
 
     def _follow_shade(self):
         """Know which half has its shade pulled down.
@@ -3076,7 +3431,8 @@ class Dock(Gtk.Window):
         size = (BUTTON_SIZE, ICON_SIZE)
 
         outer.buttons = {}
-        for info in items:
+        for desktop_id in items:
+            info = desktop_info(desktop_id)
             button = self._app_button(info, side, size)
             outer.buttons[wayland_app_id(info)] = button
             outer.pack_start(button, False, False, 0)
@@ -3088,6 +3444,399 @@ class Dock(Gtk.Window):
         outer.size = size
         return outer
 
+    MAX_PER_HALF = 5          # a half's apps; the rest of a panel is for running ones
+
+    # ---- changing the dock's apps on the device (#203) ----------------------
+    #
+    # A long press on an icon: both halves take the accent's colour and their
+    # icons grow a little. Then an icon can be dragged along its half or
+    # across the hinge into the other one - the others make room as it
+    # passes - swiped up and away, off the dock, or the dock swiped down to
+    # be done with it; left untouched it is done by itself. While it lasts,
+    # a half's icons are in a Gtk.Fixed inside its slab, placed by the frame
+    # loop below, rather than packed in a box that cannot move one of them
+    # on its own; the running apps' buttons are put away till it is over.
+
+    EDIT_GROW = 8             # px an icon's box grows by
+    EDIT_ICON_GROW = 6        # px the glyph grows by
+    EDIT_GAP = 4              # between two icons' boxes
+    EDIT_IDLE_S = 15          # untouched this long, the editing ends
+    EDIT_MS = 200             # the growing and the shrinking back
+
+    def _edit(self, on):
+        if on == bool(getattr(self, "editing", False)) or getattr(self, "edit_settling", False):
+            return
+        if on:
+            debug("editing the dock's apps")
+            self.editing = True
+            self.edit_k = 0.0
+            self.edit_target_k = 1.0
+            self.edit_drag = None
+            self.edit_fixed = {}
+            # The icons grow where they are, in their boxes; they go into
+            # the editor's Gtk.Fixed once the finger that pressed is lifted
+            # (_edit_build) - taken out of a box under a finger still
+            # pressing one of them, the button kept GTK's grab and the next
+            # touch on that half went nowhere.
+            for pane in self.panes.values():
+                pane.slab.get_style_context().add_class("editing")
+            self._edit_touch()
+            self._edit_run()
+        else:
+            debug("done editing the dock's apps")
+            self.editing = False
+            self.edit_settling = True
+            self.edit_target_k = 0.0
+            if getattr(self, "edit_idle", None):
+                GLib.source_remove(self.edit_idle)
+                self.edit_idle = None
+            for pane in self.panes.values():
+                pane.slab.get_style_context().remove_class("editing")
+            self._edit_run()
+
+    def _edit_build(self):
+        """The icons into the editor's Gtk.Fixed, one per half, at the size
+        and place they have now."""
+        if not getattr(self, "editing", False) or self.edit_fixed:
+            return False
+        eased = 1.0 - (1.0 - self.edit_k) ** 3
+        slot = BUTTON_SIZE + self.EDIT_GROW * eased + self.EDIT_GAP
+        for side, pane in self.panes.items():
+            slab = pane.slab
+            fixed = Gtk.Fixed()
+            fixed.items = []
+            fixed.side = side
+            for desktop_id in self.fav[0 if side == "left" else 1]:
+                button = next((b for b in slab.buttons.values()
+                               if getattr(b, "desktop_id", None) == desktop_id), None)
+                if button is None:
+                    continue
+                slab.remove(button)
+                button.edit_x = len(fixed.items) * slot
+                button.edit_y = 0.0
+                fixed.put(button, int(round(button.edit_x)), 0)
+                fixed.items.append(button)
+            slab.running.hide()
+            slab.pack_start(fixed, False, False, 0)
+            slab.reorder_child(fixed, 0)
+            fixed.show_all()
+            self.edit_fixed[side] = fixed
+        debug("edit: icons in the editor")
+        # the halves grew: the touches they take follow
+        GLib.timeout_add(40, lambda: (self._shape(), False)[1])
+        self._edit_run()
+        return False
+
+    def _edit_touch(self):
+        """The hand is still at it: the editing lasts EDIT_IDLE_S from now."""
+        if getattr(self, "edit_idle", None):
+            GLib.source_remove(self.edit_idle)
+
+        def idle():
+            self.edit_idle = None
+            self._edit(False)
+            return False
+        self.edit_idle = GLib.timeout_add_seconds(self.EDIT_IDLE_S, idle)
+
+    def _edit_slot(self):
+        return BUTTON_SIZE + self.EDIT_GROW * self.edit_k + self.EDIT_GAP
+
+    def _edit_run(self):
+        """Start the frame loop if it is not running."""
+        if getattr(self, "edit_loop", None):
+            return
+        self.edit_last = GLib.get_monotonic_time()
+        self.edit_loop = animate(lambda _t: self._edit_frame())
+
+    def _edit_frame(self):
+        now = GLib.get_monotonic_time()
+        dt = max(1, now - self.edit_last) / 1000.0
+        self.edit_last = now
+        # grow or shrink back, on the dock's own ease: linear in time here,
+        # eased where it is used
+        step = dt / self.EDIT_MS
+        if self.edit_k < self.edit_target_k:
+            self.edit_k = min(self.edit_target_k, self.edit_k + step)
+        elif self.edit_k > self.edit_target_k:
+            self.edit_k = max(self.edit_target_k, self.edit_k - step)
+        eased = 1.0 - (1.0 - self.edit_k) ** 3
+        box = int(round(BUTTON_SIZE + self.EDIT_GROW * eased))
+        icon = int(round(ICON_SIZE + self.EDIT_ICON_GROW * eased))
+        slot = BUTTON_SIZE + self.EDIT_GROW * eased + self.EDIT_GAP
+        # each icon towards its place, a third of the way a frame: they glide
+        follow = 1.0 - 0.66 ** (dt / 16.0)
+        moving = abs(self.edit_k - self.edit_target_k) > 1e-6
+        if not self.edit_fixed:
+            for pane in self.panes.values():
+                for button in pane.slab.buttons.values():
+                    button.set_size_request(box, box)
+                    image = self._button_image(button)
+                    if image is not None and image.get_pixel_size() != icon:
+                        image.set_pixel_size(icon)
+        for side, fixed in self.edit_fixed.items():
+            for index, button in enumerate(fixed.items):
+                drag = self.edit_drag
+                if drag and drag.get("button") is button and drag.get("mode") in ("move", "up"):
+                    tx, ty = drag["x"], drag["y"]
+                    button.edit_x, button.edit_y = tx, ty
+                else:
+                    tx, ty = index * slot, 0.0
+                    button.edit_x += (tx - button.edit_x) * follow
+                    button.edit_y += (ty - button.edit_y) * follow
+                    if abs(tx - button.edit_x) > 0.5 or abs(ty - button.edit_y) > 0.5:
+                        moving = True
+                button.set_size_request(box, box)
+                image = self._button_image(button)
+                if image is not None and image.get_pixel_size() != icon:
+                    image.set_pixel_size(icon)
+                fixed.move(button, int(round(button.edit_x)), int(round(button.edit_y)))
+            fixed.set_size_request(max(1, int(round(len(fixed.items) * slot - self.EDIT_GAP))), box)
+        for leaving in list(getattr(self, "edit_leaving", [])):
+            leaving["t"] += dt
+            k = min(1.0, leaving["t"] / 180.0)
+            button = leaving["button"]
+            button.set_opacity(1.0 - k)
+            leaving["fixed"].move(button, int(round(button.edit_x)),
+                                  int(round(leaving["y0"] - (DOCK_HEIGHT + leaving["y0"]) * k)))
+            if k >= 1.0:
+                leaving["fixed"].remove(button)
+                self.edit_leaving.remove(leaving)
+            else:
+                moving = True
+        if self.edit_drag:
+            moving = True
+        if moving:
+            return True
+        self.edit_loop = None
+        if not self.editing and self.edit_k <= 0.0:
+            self._edit_finish()
+        return False
+
+    @staticmethod
+    def _button_image(button):
+        child = button.get_child()
+        if isinstance(child, Gtk.Overlay):
+            child = child.get_child()
+        return child if isinstance(child, Gtk.Image) else None
+
+    def _edit_finish(self):
+        """Back to the boxes: each half rebuilt, in its new order."""
+        if not self.edit_fixed:
+            self.edit_settling = False
+            for pane in self.panes.values():
+                for button in pane.slab.buttons.values():
+                    button.set_size_request(BUTTON_SIZE, BUTTON_SIZE)
+            return
+        for side, fixed in self.edit_fixed.items():
+            slab = self.panes[side].slab
+            slab.remove(fixed)
+            fixed.destroy()
+            slab.buttons = {}
+            slab.running.show()
+        self.edit_fixed = {}
+        self.edit_settling = False
+        for side in ("left", "right"):
+            self._set_half(side, self.fav[0 if side == "left" else 1])
+
+    def _edit_begin(self, pane, x, y):
+        self._edit_touch()
+        fixed = self.edit_fixed.get(pane.side)
+        if fixed is None:
+            return
+        alloc = fixed.get_allocation()
+        local = x - alloc.x
+        button = next((b for b in fixed.items
+                       if b.edit_x - self.EDIT_GAP / 2 <= local < b.edit_x + self._edit_slot()), None)
+        if self.edit_drag:
+            self._edit_end(self.edit_drag["pane"], 0, 0)   # an end that never came
+        self.edit_drag = {"pane": pane, "fixed": fixed, "button": button, "mode": None,
+                          "home": fixed, "orig": button, "ghost": None,
+                          "x0": button.edit_x if button else 0.0, "x": 0.0, "y": 0.0,
+                          "screen_x0": pane.x + x}
+        if button is not None:
+            self.edit_drag["x"] = button.edit_x
+        debug("edit: finger down on the %s half at %.0f (slab %d): %s" % (
+            pane.side, x, alloc.x, getattr(button, "desktop_id", None)))
+        self._edit_run()
+
+    def _edit_update(self, pane, dx, dy):
+        drag = self.edit_drag
+        if not drag:
+            return
+        if drag["mode"] is None:
+            if (dx * dx + dy * dy) < SWIPE_PX * SWIPE_PX:
+                return
+            if abs(dy) > abs(dx):
+                drag["mode"] = "up" if dy < 0 and drag["button"] is not None else "down"
+            elif drag["button"] is not None:
+                drag["mode"] = "move"
+            else:
+                drag["mode"] = "none"
+            debug("edit: %s" % drag["mode"])
+        if drag["mode"] == "move":
+            self._edit_move(drag, dx)
+        elif drag["mode"] == "up":
+            drag["x"] = drag["button"].edit_x
+            drag["y"] = min(0.0, dy)
+        self._edit_run()
+
+    def _edit_move(self, drag, dx):
+        """The icon under the finger, and its place among the others - in
+        this half, or in the other once the finger is over it.
+
+        The button the finger pressed never leaves its window: taken to the
+        other half's window under the finger, its touch went with it and the
+        drag never ended. Over the other half it is hidden where it is and a
+        copy stands in for it there, following the finger; back over its
+        own half the copy goes and the button comes back."""
+        home = drag["home"]
+        screen_x = drag["screen_x0"] + dx
+        other_side = "right" if home.side == "left" else "left"
+        other = self.panes[other_side]
+        # Across the hinge only while the halves are joined on one panel -
+        # an app is open on the other - where the other half is right next
+        # to this one. Apart, an icon keeps to its own half: a drag across
+        # the bezel, from one panel to the other, was more than the hand
+        # wanted of it.
+        joined = self.mode in ("left", "right")
+        in_other = (joined and other.x <= screen_x < other.x + other.width and
+                    (drag.get("ghost") is not None or
+                     len(self.edit_fixed[other_side].items) < self.MAX_PER_HALF))
+        orig = drag["orig"]
+        if in_other and drag.get("ghost") is None:
+            target = self.edit_fixed[other_side]
+            info = desktop_info(orig.desktop_id)
+            ghost = self._app_button(info, other_side, (BUTTON_SIZE, ICON_SIZE))
+            ghost.edit_x, ghost.edit_y = 0.0, 0.0
+            target.put(ghost, 0, 0)
+            target.items.append(ghost)
+            ghost.show_all()
+            home.items.remove(orig)
+            orig.set_opacity(0.0)
+            drag["ghost"], drag["button"], drag["fixed"] = ghost, ghost, target
+            debug(f"{orig.desktop_id} over the {other_side} half")
+            GLib.timeout_add(60, lambda: (self._shape(), False)[1])
+        elif not in_other and drag.get("ghost") is not None and \
+                self.panes[home.side].x <= screen_x < self.panes[home.side].x + self.panes[home.side].width:
+            ghost, target = drag["ghost"], drag["fixed"]
+            target.items.remove(ghost)
+            target.remove(ghost)
+            home.items.append(orig)
+            orig.set_opacity(1.0)
+            drag["ghost"], drag["button"], drag["fixed"] = None, orig, home
+            debug(f"{orig.desktop_id} back over the {home.side} half")
+        button, fixed = drag["button"], drag["fixed"]
+        pane = self.panes[fixed.side]
+        alloc = fixed.get_allocation()
+        slot = self._edit_slot()
+        local = screen_x - pane.x - alloc.x - slot / 2
+        local = max(0.0, min(local, (len(fixed.items) - 1) * slot))
+        drag["x"], drag["y"] = local, 0.0
+        index = int(round(local / slot))
+        index = max(0, min(index, len(fixed.items) - 1))
+        if fixed.items.index(button) != index:
+            fixed.items.remove(button)
+            fixed.items.insert(index, button)
+
+    def _edit_end(self, pane, dx, dy):
+        drag, self.edit_drag = self.edit_drag, None
+        self._edit_touch()
+        if not drag:
+            return
+        mode = drag["mode"]
+        if drag.get("ghost") is not None:
+            drag["home"].remove(drag["orig"])       # hidden since it crossed
+        if mode == "down" and dy > SWIPE_PX * 2:
+            self._edit(False)
+            return
+        if mode == "up" and dy < -SWIPE_PX * 2:
+            button, fixed = drag["button"], drag["fixed"]
+            debug(f"{button.desktop_id} swiped off the dock")
+            fixed.items.remove(button)
+            self.edit_leaving = getattr(self, "edit_leaving", [])
+            self.edit_leaving.append({"button": button, "fixed": fixed, "t": 0.0,
+                                      "y0": min(0.0, dy)})
+        # what the halves hold now is the dock
+        self.fav = [[b.desktop_id for b in self.edit_fixed["left"].items],
+                    [b.desktop_id for b in self.edit_fixed["right"].items]]
+        save_favourites(*self.fav)
+        self._edit_run()
+
+    def _set_half(self, side, desktop_ids):
+        """Put these apps, in this order, in a half of the dock, and keep it
+        that way (#203). The half is rebuilt where it stands; the running
+        apps' buttons after them are redone from what is running."""
+        index = 0 if side == "left" else 1
+        self.fav[index] = list(desktop_ids)
+        save_favourites(*self.fav)
+        slab = self.panes[side].slab
+        for button in list(slab.buttons.values()):
+            slab.remove(button)
+        slab.buttons = {}
+        for position, desktop_id in enumerate(desktop_ids):
+            info = desktop_info(desktop_id)
+            if info is None:
+                continue
+            button = self._app_button(info, side, slab.size)
+            slab.buttons[wayland_app_id(info)] = button
+            slab.pack_start(button, False, False, 0)
+            slab.reorder_child(button, position)
+            button.show_all()
+        running, self.running = getattr(self, "running", None), None
+        if running is not None:
+            self._set_running(running)
+        self._relayout()
+
+    def _pinned_side(self, desktop_id):
+        for side, half in zip(("left", "right"), self.fav):
+            if desktop_id in half:
+                return side
+        return None
+
+    def _pin(self, desktop_id, side):
+        """An app from the grid onto the dock: at the end of the half for the
+        panel the grid is on, if that half has room, else the other's."""
+        if self._pinned_side(desktop_id):
+            return
+        for where in (side, "right" if side == "left" else "left"):
+            half = self.fav[0 if where == "left" else 1]
+            if len(half) < self.MAX_PER_HALF:
+                debug(f"{desktop_id} pinned to the {where} half")
+                self._set_half(where, half + [desktop_id])
+                return
+        debug(f"{desktop_id} not pinned: both halves are full")
+
+    def _unpin(self, desktop_id):
+        side = self._pinned_side(desktop_id)
+        if side is None:
+            return
+        debug(f"{desktop_id} unpinned from the {side} half")
+        self._set_half(side, [d for d in self.fav[0 if side == "left" else 1] if d != desktop_id])
+
+    def _grid_menu(self, button, info, side):
+        """A long press on an app in the grid: Add to dock, or Remove from
+        dock if it is there already (#203). A popover over the icon; a tap
+        anywhere else closes it."""
+        button.long_pressed = True
+        desktop_id = info.get_id()
+        pinned = self._pinned_side(desktop_id) is not None
+        popover = Gtk.Popover.new(button)
+        popover.get_style_context().add_class("grid-menu")
+        item = Gtk.Button(label="Remove from dock" if pinned else "Add to dock")
+        item.set_relief(Gtk.ReliefStyle.NONE)
+        item.get_style_context().add_class("grid-menu-item")
+
+        def chosen(_item):
+            popover.popdown()
+            if pinned:
+                self._unpin(desktop_id)
+            else:
+                self._pin(desktop_id, self.grid_side)
+        item.connect("clicked", chosen)
+        popover.add(item)
+        item.show()
+        popover.popup()
+
     def _unswipe(self):
         self.swiped = False
         return False
@@ -3095,6 +3844,8 @@ class Dock(Gtk.Window):
     def _on_pane_clicked(self, button, info, pane_side):
         """A tap on a half opens onto the panel that half is on now: its
         own when the dock is across both, the free one otherwise."""
+        if getattr(self, "editing", False) or getattr(self, "edit_settling", False):
+            return
         if getattr(self, "swiped", False):
             debug("click after a swipe, ignored: %s" % info.get_id())
             return
@@ -3123,8 +3874,9 @@ class Dock(Gtk.Window):
         button.app_id = wayland_app_id(info)
         press = Gtk.GestureLongPress.new(button)
         press.set_touch_only(True)
-        press.connect("pressed", lambda g, *_a: self._close_app(button.app_id))
+        press.connect("pressed", lambda g, *_a: self._edit(True))
         button.long_press = press                  # keep it alive
+        button.desktop_id = info.get_id()
         return button
 
     def _build_grid(self):
@@ -3183,6 +3935,11 @@ class Dock(Gtk.Window):
             box.pack_start(dot, False, False, 0)
             button.dot = dot
             button.connect("clicked", self._on_grid_app, info, side)
+            press = Gtk.GestureLongPress.new(button)
+            press.set_touch_only(True)
+            press.connect("pressed", lambda _g, _x, _y, b=button, i=info, s=side:
+                          self._grid_menu(b, i, s))
+            button.long_press = press               # keep it alive
             self.grid_apps = getattr(self, "grid_apps", {})
             self.grid_apps.setdefault(wayland_app_id(info), []).append(button)
             flow.add(button)
@@ -3202,6 +3959,9 @@ class Dock(Gtk.Window):
         return scroller
 
     def _on_grid_app(self, button, info, side):
+        if getattr(button, "long_pressed", False):
+            button.long_pressed = False             # the release of a long press
+            return
         if getattr(self, "swiped", False):
             debug("click after a swipe, ignored: %s" % info.get_id())
             return
@@ -3248,6 +4008,7 @@ class Dock(Gtk.Window):
         self._place_clock()
         for grid in self.grids.values():
             grid.set_size_request(half, STAGE_HEIGHT)
+            grid.park()
         for catcher in self.catchers.values():
             catcher.set_size_request(half, -1)
         # the whole panel, top to bottom: STAGE_HEIGHT stops at phosh's top
@@ -3288,6 +4049,10 @@ class Dock(Gtk.Window):
         try:
             with open(path) as fp:
                 desktop_id, side = fp.read().split()[:2]
+            # GNOME Settings by its id opens the port's Settings (see
+            # favourites): wait for that window, not for one never coming
+            if desktop_id == "org.gnome.Settings.desktop" and desktop_info(PORT_SETTINGS):
+                desktop_id = PORT_SETTINGS
             info = desktop_info(desktop_id)
         except (OSError, ValueError, TypeError) as err:
             print(f"sfduo-dock: {path}: {err}", file=sys.stderr)
@@ -3295,7 +4060,25 @@ class Dock(Gtk.Window):
         if info is not None and side in ("left", "right"):
             self._on_clicked(None, info, side)
 
+    BOOST_SOCK = "/run/sfduo-boost.sock"
+    BOOST_MS = 1500
+
+    def _boost(self):
+        """The big cores for the app about to start or come back (sfduo-boost):
+        the scheduler would take a launch that long to move it off the little
+        ones - 1050 against 710 ms for Calculator. Nothing waits for it, and
+        without the service it is simply not there."""
+        try:
+            sock = getattr(self, "boost_sock", None)
+            if sock is None:
+                sock = self.boost_sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+                sock.setblocking(False)
+            sock.sendto(str(self.BOOST_MS).encode(), self.BOOST_SOCK)
+        except OSError:
+            pass
+
     def _on_clicked(self, _button, info, side):
+        self._boost()
         app_id = wayland_app_id(info)
         if app_id in getattr(self, "running", {}):
             # It has a window: bring that back rather than start another.
@@ -3313,6 +4096,9 @@ class Dock(Gtk.Window):
                                  daemon=True).start()
                 return
             self._present(app_id)
+            for follower in getattr(self, "put_away_with", {}).pop(app_id, []):
+                if follower in self.running:
+                    self._present(follower)
             return
         # The curtain first: it is the tap's answer. Asking which windows
         # there are (a wlrctl run) and starting the app came before it, 70-90

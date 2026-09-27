@@ -213,3 +213,11 @@ phosh-app-grid-folder-button {
   background-color: #000000;
   transition: none;
 }
+
+/* The on-screen keyboard's background is the desktop's black: the keys
+   stand on the panel rather than on a grey slab across it. Its own sheet
+   is the application's; this one is the user's and wins. */
+pos-input-surface,
+pos-osk-widget {
+  background-color: #000000;
+}

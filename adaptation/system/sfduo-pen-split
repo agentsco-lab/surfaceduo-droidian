@@ -1,0 +1,300 @@
+#!/usr/bin/python3
+"""sfduo-pen-split: the digitizer's one node as two - fingers and the pen (#24).
+
+The vendor touchpen HAL gives Linux a single uinput node, surface_touchscreen,
+for both: the pen is a multitouch contact like a finger, with tracking id
+65535 and a graded pressure (docs/PEN.md). The port forces that node to the
+touchscreen class so touch works at all, and the pen's pressure, buttons and
+eraser are then lost: every program sees a finger.
+
+This takes the node for itself (EVIOCGRAB) and writes two:
+
+    sfduo touchscreen   the fingers, as they came
+    sfduo pen           the pen, as a tablet tool on the screen: proximity,
+                        touch, pressure, the barrel button, the eraser
+
+libinput sees a touchscreen and a tablet; GTK's stylus gesture gets the pen.
+If this stops, the grab goes with it and the original node reaches the
+compositor again - touch never depends on this being alive.
+
+The pen is a tablet tool only where it draws: on the pen's sheet
+(sfduo-pen-screen), out over the right panel. Everywhere else it is one more
+finger, so that the shell's and the dock's swipes, which take touches, take
+the pen too; hovering is not a touch. Which one a stroke is, is decided as
+the pen comes near and kept until it leaves. The sheet says whether it is out
+with a datagram to PEN_SOCK: "1" out, "0" not.
+
+    sfduo-pen-split [--for SECONDS]     run; with --for, leave after that long
+"""
+import os
+import select
+import socket
+import sys
+import time
+
+import evdev
+from evdev import InputDevice, UInput, ecodes as e
+
+SOURCE_NAME = "surface_touchscreen"
+PEN_SOCK = "/run/sfduo-pen.sock"
+# where the right panel starts across the output (logical 717 of 1392): the
+# sheet lies over it
+SHEET_FROM = 717 / 1392
+PEN_ID = 65535                   # the tracking id the digitizer gives the pen
+# the panel's size, for the resolution a tablet has to have (wlr-randr: 175 x 114 mm)
+WIDTH_MM, HEIGHT_MM = 175, 114
+
+
+def log(msg):
+    print(f"sfduo-pen-split: {msg}", file=sys.stderr, flush=True)
+
+
+def find_source():
+    for path in evdev.list_devices():
+        try:
+            dev = InputDevice(path)
+        except OSError:
+            continue
+        if dev.name == SOURCE_NAME:
+            return dev
+    return None
+
+
+def make_devices(src):
+    absinfo = dict(src.capabilities()[e.EV_ABS])
+    ax, ay = absinfo[e.ABS_MT_POSITION_X], absinfo[e.ABS_MT_POSITION_Y]
+    res_x = max(1, round(ax.max / WIDTH_MM))
+    res_y = max(1, round(ay.max / HEIGHT_MM))
+
+    def info(code, **over):
+        a = absinfo[code]
+        return evdev.AbsInfo(value=0, min=a.min, max=a.max, fuzz=0, flat=0,
+                             resolution=over.get("resolution", a.resolution))
+
+    touch_abs = [(e.ABS_X, info(e.ABS_MT_POSITION_X, resolution=res_x)),
+                 (e.ABS_Y, info(e.ABS_MT_POSITION_Y, resolution=res_y))]
+    for code in (e.ABS_MT_SLOT, e.ABS_MT_TRACKING_ID, e.ABS_MT_POSITION_X, e.ABS_MT_POSITION_Y,
+                 e.ABS_MT_TOUCH_MAJOR, e.ABS_MT_TOUCH_MINOR, e.ABS_MT_ORIENTATION, e.ABS_MT_PRESSURE):
+        if code in absinfo:
+            over = {"resolution": res_x} if code == e.ABS_MT_POSITION_X else \
+                   {"resolution": res_y} if code == e.ABS_MT_POSITION_Y else {}
+            touch_abs.append((code, info(code, **over)))
+    touch = UInput({e.EV_KEY: [e.BTN_TOUCH], e.EV_ABS: touch_abs},
+                   name="sfduo touchscreen", input_props=[e.INPUT_PROP_DIRECT])
+
+    pmax = absinfo[e.ABS_MT_PRESSURE].max if e.ABS_MT_PRESSURE in absinfo else 65535
+    pen = UInput({e.EV_KEY: [e.BTN_TOOL_PEN, e.BTN_TOOL_RUBBER, e.BTN_TOUCH, e.BTN_STYLUS],
+                  e.EV_ABS: [(e.ABS_X, info(e.ABS_MT_POSITION_X, resolution=res_x)),
+                             (e.ABS_Y, info(e.ABS_MT_POSITION_Y, resolution=res_y)),
+                             (e.ABS_PRESSURE, evdev.AbsInfo(0, 0, pmax, 0, 0, 0))]},
+                 name="sfduo pen", input_props=[e.INPUT_PROP_DIRECT])
+    return touch, pen
+
+
+class Splitter:
+    """Multitouch protocol B in, per slot; each frame out to whichever device
+    owns the slots that changed."""
+
+    def __init__(self, touch, pen, max_x):
+        self.touch, self.pen = touch, pen
+        self.sheet_out = False           # the pen's sheet is out: the pen draws there
+        self.sheet_x = int(max_x * SHEET_FROM)
+        self.pen_route = None            # "tablet" or "touch": this stroke's, while it is near
+        self.pen_touching = False        # as a finger: down
+        self.touch_id = 1
+        self.slot = 0
+        self.slots = {}                  # slot -> {code: value}
+        self.pen_slot = None
+        self.rubber = False
+        self.stylus = False
+        self.changed = {}                # slot -> {code: value} this frame
+        self.keys = []                   # pen keys this frame
+        self.fingers_down = 0
+        self.pen_state = {"prox": False, "touch": False}
+
+    def event(self, ev):
+        if ev.type == e.EV_ABS:
+            if ev.code == e.ABS_MT_SLOT:
+                self.slot = ev.value
+                return
+            if ev.code == e.ABS_MT_TRACKING_ID and ev.value == PEN_ID:
+                self.pen_slot = self.slot
+            self.slots.setdefault(self.slot, {})[ev.code] = ev.value
+            self.changed.setdefault(self.slot, {})[ev.code] = ev.value
+        elif ev.type == e.EV_KEY:
+            if ev.code == e.BTN_TOOL_RUBBER:
+                self.rubber = bool(ev.value)
+                self.keys.append(ev.code)
+            elif ev.code == e.BTN_STYLUS:
+                self.stylus = bool(ev.value)
+                self.keys.append(ev.code)
+        elif ev.type == e.EV_SYN and ev.code == e.SYN_REPORT:
+            self.frame()
+
+    def frame(self):
+        finger_out = False
+        pen_changed = bool(self.keys)
+        for slot, codes in self.changed.items():
+            if slot == self.pen_slot:
+                pen_changed = True
+                continue
+            self.touch.write(e.EV_ABS, e.ABS_MT_SLOT, slot)
+            if e.ABS_MT_TRACKING_ID in codes:
+                self.touch.write(e.EV_ABS, e.ABS_MT_TRACKING_ID, codes[e.ABS_MT_TRACKING_ID])
+            for code, value in codes.items():
+                if code != e.ABS_MT_TRACKING_ID:
+                    self.touch.write(e.EV_ABS, code, value)
+            finger_out = True
+        if finger_out:
+            down = [s for s, st in self.slots.items()
+                    if s != self.pen_slot and st.get(e.ABS_MT_TRACKING_ID, -1) >= 0]
+            if bool(down) != bool(self.fingers_down) and not self.pen_touching:
+                self.touch.write(e.EV_KEY, e.BTN_TOUCH, 1 if down else 0)
+            if down:
+                first = self.slots[min(down)]
+                if e.ABS_MT_POSITION_X in first:
+                    self.touch.write(e.EV_ABS, e.ABS_X, first[e.ABS_MT_POSITION_X])
+                if e.ABS_MT_POSITION_Y in first:
+                    self.touch.write(e.EV_ABS, e.ABS_Y, first[e.ABS_MT_POSITION_Y])
+            self.fingers_down = len(down)
+            self.touch.syn()
+        if pen_changed:
+            self.pen_frame()
+        self.changed = {}
+        self.keys = []
+
+    def pen_frame(self):
+        st = self.slots.get(self.pen_slot, {}) if self.pen_slot is not None else {}
+        present = st.get(e.ABS_MT_TRACKING_ID, -1) == PEN_ID
+        if present and self.pen_route is None:
+            over_sheet = st.get(e.ABS_MT_POSITION_X, 0) >= self.sheet_x
+            self.pen_route = "tablet" if self.sheet_out and over_sheet else "touch"
+        if self.pen_route == "touch" or (not present and self.pen_touching):
+            self.pen_as_finger(st, present)
+            if not present:
+                self.forget_pen(st)
+            return
+        tool = e.BTN_TOOL_RUBBER if self.rubber else e.BTN_TOOL_PEN
+        if present:
+            if not self.pen_state["prox"]:
+                self.pen.write(e.EV_KEY, tool, 1)
+                self.pen_state["prox"] = tool
+            elif self.pen_state["prox"] != tool:
+                self.pen.write(e.EV_KEY, self.pen_state["prox"], 0)
+                self.pen.write(e.EV_KEY, tool, 1)
+                self.pen_state["prox"] = tool
+            if e.ABS_MT_POSITION_X in st:
+                self.pen.write(e.EV_ABS, e.ABS_X, st[e.ABS_MT_POSITION_X])
+            if e.ABS_MT_POSITION_Y in st:
+                self.pen.write(e.EV_ABS, e.ABS_Y, st[e.ABS_MT_POSITION_Y])
+            pressure = st.get(e.ABS_MT_PRESSURE, 0)
+            self.pen.write(e.EV_ABS, e.ABS_PRESSURE, pressure)
+            touching = pressure > 0
+            if touching != self.pen_state["touch"]:
+                self.pen.write(e.EV_KEY, e.BTN_TOUCH, 1 if touching else 0)
+                self.pen_state["touch"] = touching
+            self.pen.write(e.EV_KEY, e.BTN_STYLUS, 1 if self.stylus else 0)
+        else:
+            if self.pen_state["touch"]:
+                self.pen.write(e.EV_ABS, e.ABS_PRESSURE, 0)
+                self.pen.write(e.EV_KEY, e.BTN_TOUCH, 0)
+                self.pen_state["touch"] = False
+            if self.pen_state["prox"]:
+                self.pen.write(e.EV_KEY, self.pen_state["prox"], 0)
+                self.pen_state["prox"] = False
+            self.forget_pen(st)
+        self.pen.syn()
+
+    def forget_pen(self, st):
+        if self.pen_slot is not None and st.get(e.ABS_MT_TRACKING_ID, -1) < 0:
+            self.slots.pop(self.pen_slot, None)
+            self.pen_slot = None
+        self.pen_route = None
+
+    def pen_as_finger(self, st, present):
+        """The pen as one more finger: down while it presses, up when it
+        lifts or leaves; its hovering is nothing."""
+        pressing = present and st.get(e.ABS_MT_PRESSURE, 0) > 0
+        slot = self.pen_slot if self.pen_slot is not None else 0
+        wrote = False
+        if pressing:
+            self.touch.write(e.EV_ABS, e.ABS_MT_SLOT, slot)
+            if not self.pen_touching:
+                self.touch_id = self.touch_id % 60000 + 1
+                self.touch.write(e.EV_ABS, e.ABS_MT_TRACKING_ID, self.touch_id)
+            for code in (e.ABS_MT_POSITION_X, e.ABS_MT_POSITION_Y):
+                if code in st:
+                    self.touch.write(e.EV_ABS, code, st[code])
+            if not self.pen_touching and not self.fingers_down:
+                self.touch.write(e.EV_KEY, e.BTN_TOUCH, 1)
+            if not self.fingers_down:
+                if e.ABS_MT_POSITION_X in st:
+                    self.touch.write(e.EV_ABS, e.ABS_X, st[e.ABS_MT_POSITION_X])
+                if e.ABS_MT_POSITION_Y in st:
+                    self.touch.write(e.EV_ABS, e.ABS_Y, st[e.ABS_MT_POSITION_Y])
+            self.pen_touching = wrote = True
+        elif self.pen_touching:
+            self.touch.write(e.EV_ABS, e.ABS_MT_SLOT, slot)
+            self.touch.write(e.EV_ABS, e.ABS_MT_TRACKING_ID, -1)
+            if not self.fingers_down:
+                self.touch.write(e.EV_KEY, e.BTN_TOUCH, 0)
+            self.pen_touching = False
+            wrote = True
+        if wrote:
+            self.touch.syn()
+
+
+def main():
+    until = None
+    if "--for" in sys.argv:
+        until = time.monotonic() + float(sys.argv[sys.argv.index("--for") + 1])
+    src = None
+    for _ in range(60):
+        src = find_source()
+        if src:
+            break
+        time.sleep(1)
+    if src is None:
+        log(f"no {SOURCE_NAME} node - nothing to split")
+        return 1
+    touch, pen = make_devices(src)
+    time.sleep(0.5)                      # udev and the compositor meet the new devices first
+    src.grab()
+    log(f"{src.path} split into '{touch.name}' ({touch.device.path}) and '{pen.name}' ({pen.device.path})")
+    splitter = Splitter(touch, pen, dict(src.capabilities()[e.EV_ABS])[e.ABS_MT_POSITION_X].max)
+    try:
+        os.unlink(PEN_SOCK)
+    except FileNotFoundError:
+        pass
+    sheet = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    sheet.bind(PEN_SOCK)
+    os.chmod(PEN_SOCK, 0o666)
+    try:
+        while until is None or time.monotonic() < until:
+            r, _, _ = select.select([src.fd, sheet], [], [], 1.0)
+            if sheet in r:
+                splitter.sheet_out = sheet.recv(16).strip() == b"1"
+            if src.fd not in r:
+                continue
+            for ev in src.read():
+                splitter.event(ev)
+    except OSError as err:
+        log(f"the node went away: {err}")          # the HAL restarted: systemd starts this again
+        return 1
+    finally:
+        try:
+            src.ungrab()
+        except OSError:
+            pass
+        touch.close()
+        pen.close()
+        try:
+            os.unlink(PEN_SOCK)
+        except OSError:
+            pass
+    log("left after its time, the node given back")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

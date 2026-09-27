@@ -1,0 +1,15 @@
+[Unit]
+Description=Surface Duo pen - the digitizer's node split into fingers and a pen tablet
+# The node is the vendor touchpen HAL's (in the container); this waits for it
+# and takes it over. Stopped or failed, the node reaches the compositor as
+# before - touch does not depend on this.
+After=lxc@android.service
+Wants=lxc@android.service
+
+[Service]
+ExecStart=/usr/local/sbin/sfduo-pen-split
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
