@@ -9,9 +9,30 @@ set -e
 
 # The bundle is optional: recent rootfs images ship sshd themselves and
 # then this directory holds only the adaptation deb, or nothing at all.
-if ls /var/cache/sfduo-ssh/*.deb >/dev/null 2>&1; then
-    dpkg -i /var/cache/sfduo-ssh/*.deb || dpkg --configure -a
-fi
+# A package the image already has is left as it is: Droidian 102 ships
+# openssh 1:10.4, and the 101-era bundle's 1:10.0 installed over it
+# downgraded half its dependencies and left them unconfigured (2026-09-27,
+# clean-install test) - apt broken, and this script dead before the reboot
+# below. The adaptation goes in on its own, and must.
+cd /var/cache/sfduo-ssh 2>/dev/null && {
+    extra=""
+    for d in *.deb; do
+        [ -f "$d" ] || continue
+        pkg=$(dpkg-deb -f "$d" Package)
+        [ "$pkg" = adaptation-droidian-surfaceduo ] && continue
+        dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed' && continue
+        extra="$extra $d"
+    done
+    if [ -n "$extra" ]; then
+        dpkg -i --refuse-downgrade $extra || dpkg --configure -a || true
+    fi
+    for d in adaptation-droidian-surfaceduo_*.deb; do
+        if [ -f "$d" ]; then
+            dpkg -i "$d"
+        fi
+    done
+    true
+}
 
 systemctl daemon-reload
 # The 101 image ships no sshd, and without the offline bundle there is none
@@ -29,8 +50,15 @@ sync
 # guard all belong to the start of a boot, and a system left running
 # without them has no sound and, measured, can freeze within minutes. The
 # flag above is written first, so this cannot loop.
+#
+# The reboot goes to fastboot, not to the system. This boot is a RAM-boot
+# (PORT-GUIDE.md), and a plain reboot starts whatever kernel the slot holds:
+# on a phone new to the port that is stock Android's, which then boots on
+# the port's userdata and poisons misc (SAFETY.md). The misc brake does not
+# help - the RAM-boot has consumed it. From fastboot the port's image is
+# RAM-booted a second time, by hand.
 if dpkg-query -W -f='${Status}' adaptation-droidian-surfaceduo 2>/dev/null \
         | grep -q 'install ok installed'; then
-    echo "sfduo: adaptation installed - rebooting once to start with it" >&2
-    systemctl --no-block reboot
+    echo "sfduo: adaptation installed - rebooting once, into fastboot" >&2
+    systemctl --no-block --reboot-argument=bootloader reboot
 fi

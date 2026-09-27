@@ -2,7 +2,8 @@
 
 Prerequisites: a Surface Duo 1 (any storage size) with an unlockable
 bootloader, a Linux host with docker + adb/fastboot + python3 +
-device-tree-compiler, and [docs/SAFETY.md](SAFETY.md) read twice.
+device-tree-compiler, and [docs/SAFETY.md](SAFETY.md) read twice. Going
+back to stock Android, and coming from it: [STOCK-ANDROID.md](STOCK-ANDROID.md).
 
 ## 0. Backups (non-negotiable)
 
@@ -56,23 +57,30 @@ boot image.
 
 ## 3. Rootfs
 
-Use the **Droidian 101 release** image, `rootfs api30 arm64` (phosh
-phone variant), not the current nightly.
+Since 0.20 the port runs on **Droidian 102**: take the current nightly,
+`rootfs api30 arm64` of the phosh phone variant, from Droidian's image
+releases (a file named like
+`droidian-OFFICIAL-phosh-phone-rootfs-api30-arm64-next_<date>.zip`), and
+check its sha256. 0.20 is built and tested on 102. It still carries 0.18's
+phoc, phosh and keyboard for Droidian 101, but was not tested there: on 101,
+0.18.0 is the release to use.
 
-This is not caution for its own sake. Everything in this repository was
-built and verified against 101 (2025-11-30), and a later nightly has
-already broken this port once, in a way that costs a whole evening to
-find: newer `lxc-android` waits for the container through
-`droidian-apex`, which never sees `apexd.status` reach `ready` on this
-device even though apexd sets it within five seconds. `lxc@android`
-then fails on a 90 second timeout, `android-service@hwcomposer` fails
-on the dependency, `phosh` fails on that, and the phone boots to the
-Debian logo and then two black panels with no obvious cause. The 101
-image waits through `waitforservice` instead, which reads the property
-directly and does not hit this at all.
+**Take only `data/rootfs.img` out of the zip. Do not flash the zip.** Its
+installer script writes boot, dtbo and vbmeta with `dd` whenever it finds
+them, and this phone gets its boot image from step 2, RAM-booted - see
+SAFETY.md.
 
-If you do run a newer base and the screens stay black after the logo,
-check `systemctl status lxc@android` first.
+The image comes small; give apt room before it goes on the phone. On the
+computer:
+
+```
+unzip -p droidian-*-rootfs-api30-arm64-*.zip data/rootfs.img > rootfs.img
+e2fsck -fy rootfs.img && resize2fs rootfs.img 8G
+```
+
+(or `resize2fs` in TWRP, if yours has it - not every recovery for this
+phone does). After the shell setup in step 6 the image grows by itself to
+fill userdata on the next boot.
 
 From TWRP:
 
@@ -80,22 +88,30 @@ From TWRP:
 mke2fs -t ext4 /dev/block/sda6           # userdata, wipes Android!
 mount /dev/block/sda6 /data
 adb push rootfs.img /data/rootfs.img     # verify sha256 after push
-resize2fs /data/rootfs.img 8G            # give apt some room
 ```
 
 The halium initramfs finds `/data/rootfs.img` by the `datapart=`
 cmdline argument and loop-mounts it as /.
 
+If the screens stay black after the Debian logo, check `systemctl status
+lxc@android` first: 102 waits for the Android container differently from
+101, and packages older than 0.20 time out on it on this phone.
+
 ## 4. Adaptation
 
-Build the package (`adaptation/package/build.sh`, or take the .deb from a
-release) and inject it with `adaptation/ssh/inject-ssh-twrp.sh`: USB RNDIS access +
-sshd (the nightly ships none), the touch udev rule, bluetooth fixes
-(start timeout + board-address), vendor-daemon taming with early ADSP
-boot (without it the system I/O-deadlocks ~2 minutes after boot), the
-suspend hooks. Loop-mount the rootfs image from TWRP
-(`e2fsck -fy` first - the journal is usually dirty) and run the inject
-script.
+Put the package (from the release, or built with
+`adaptation/package/build.sh`) in `out/` - only one version there, the
+script takes the newest - and, with the phone still in TWRP, run
+`adaptation/ssh/inject-ssh-twrp.sh`. It checks and loop-mounts the image,
+puts your ssh key in (`~/.ssh/id_ed25519.pub`, or `SFDUO_PUBKEY`) and a
+first-boot unit that installs the package. The 102 image ships sshd, so no
+openssh bundle is needed; if `out/ssh-debs/` holds one from 101 days, it is
+left out.
+
+The package brings the rest: USB RNDIS access, the touch udev rule,
+bluetooth fixes (start timeout + board-address), vendor-daemon taming with
+early ADSP boot (without it the system I/O-deadlocks ~2 minutes after
+boot), the suspend hooks, audio, modem, wlan and the two-panel shell.
 
 ## 5. First boot
 
@@ -106,8 +122,20 @@ fastboot erase misc && fastboot flash misc misc-brake.img   # tools/make-misc-br
 tools/flash-safely.sh ram-boot boot-duo1-droidian.img
 ```
 
-~60-90 s later both panels show the Phosh lock screen (PIN 1234) and a
-new RNDIS interface appears on the host.
+The first boot installs the package and then **reboots once by itself,
+into fastboot**: the package's early-boot parts (the ADSP ordering, the
+audio modules, the slot guard) only work from the start of a boot, and a
+plain reboot would start the kernel on the slot - stock Android's, on a
+phone new to the port. When the phone is back in fastboot (a minute or two),
+RAM-boot the same image again:
+
+```
+fastboot getvar current-slot
+tools/flash-safely.sh ram-boot boot-duo1-droidian.img
+```
+
+~60-90 s later both panels show the Phosh lock screen (PIN 1234) and a new
+RNDIS interface appears on the host.
 
 If instead the screens go black right after the Debian logo and the
 power key looks dead, the system underneath is almost certainly fine:
@@ -129,14 +157,34 @@ If your host routes 172.16.42.0/24 elsewhere you will "connect" to
 something that is not the phone - a sub-2 ms ping RTT is the tell that
 you are actually on the USB link.
 
-## 6. What to expect
+## 6. The shell, and the rest of the setup
 
-See the status matrix in the top-level README. Touch works end-to-end
-(kernel spi-hid → vendor touchpen HAL → uinput → udev rule). Stock
-phosh treats the two panels as one span, so centered UI falls into the
-hinge gap; the adaptation's experimental shell (`adaptation/shell/`) works
-around that from outside phosh - run `sudo sfduo-shell-setup` once the
-device is online to give it what it needs.
+Connect to Wi-Fi (the shade on the left panel, or `nmcli device wifi
+connect <ssid> password <password>` over ssh), then:
+
+```
+sudo sfduo-shell-setup
+sudo reboot
+```
+
+The package was installed offline, before the phone had a network, so it
+only recommends what it needs from Debian. This installs it: the GTK and
+layer-shell libraries of the dock, the clock and the pen's screen,
+`python3-evdev` for the pen, `e2fsprogs` for growing the root filesystem.
+It then lets the patched phosh tile windows to a panel. The reboot starts
+the session with all of it. After it: the
+dock in two halves, the pen, and the root filesystem grown to the size of
+userdata.
+
+Then, in Settings:
+
+- **Date & Time**: the image starts on UTC. The automatic time zone follows
+  the location; if the clock is off, pick the zone by hand.
+- **Fingerprint**: enrol a finger; the lock screen unlocks by it whenever
+  the locked screen is lit.
+
+See the status matrix in the top-level README for what works. Touch works
+end-to-end (kernel spi-hid → vendor touchpen HAL → uinput → udev rule).
 
 ## Debug channels, in order of preference
 

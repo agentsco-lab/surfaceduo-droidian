@@ -65,7 +65,14 @@ adb shell "mkdir -p $MNT && mount -o loop,rw /data/rootfs.img $MNT"
 adb shell "set -e
 R=$MNT
 mkdir -p \$R/var/cache/sfduo-ssh
-ls /tmp/sfduo-ssh/*.deb >/dev/null 2>&1 && cp /tmp/sfduo-ssh/*.deb \$R/var/cache/sfduo-ssh/ || true
+# an image that ships sshd (Droidian 102) gets the adaptation only: the
+# 101-era openssh bundle would downgrade its newer openssh
+if [ -x \$R/usr/sbin/sshd ]; then
+    ls /tmp/sfduo-ssh/adaptation-*.deb >/dev/null 2>&1 && cp /tmp/sfduo-ssh/adaptation-*.deb \$R/var/cache/sfduo-ssh/ || true
+    echo 'sshd in the image: openssh bundle left out'
+else
+    ls /tmp/sfduo-ssh/*.deb >/dev/null 2>&1 && cp /tmp/sfduo-ssh/*.deb \$R/var/cache/sfduo-ssh/ || true
+fi
 cp /tmp/sfduo-ssh/sfduo-ssh-firstboot.sh \$R/usr/local/sbin/sfduo-ssh-firstboot.sh
 chmod 755 \$R/usr/local/sbin/sfduo-ssh-firstboot.sh
 cp /tmp/sfduo-ssh/sfduo-ssh-firstboot.service \$R/etc/systemd/system/
@@ -86,7 +93,7 @@ printf 'PermitRootLogin prohibit-password\n' > \$R/etc/ssh/sshd_config.d/10-sfdu
 echo "== verify"
 ok="$(adb shell "test -f $MNT/root/.ssh/authorized_keys && test -L $MNT/etc/systemd/system/multi-user.target.wants/sfduo-ssh-firstboot.service && echo INJECT_OK" | tr -d '\r')"
 [ "$ok" = "INJECT_OK" ] || { echo "ERROR: verification failed - do NOT boot, inspect $MNT on device"; exit 1; }
-if [ "$HAVE_BUNDLE" = 1 ]; then
+if [ "$HAVE_BUNDLE" = 1 ] && [ "$(adb shell "test -x $MNT/usr/sbin/sshd && echo yes" | tr -d '\r')" != yes ]; then
     adb shell "ls $MNT/var/cache/sfduo-ssh/openssh-server_*.deb >/dev/null 2>&1 && echo BUNDLE_OK" \
         | tr -d '\r' | grep -q BUNDLE_OK \
         || { echo "ERROR: bundle was pushed but openssh-server is not in it"; exit 1; }

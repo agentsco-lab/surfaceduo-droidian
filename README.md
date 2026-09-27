@@ -102,23 +102,26 @@ shell is **experimental and in development**.
    redistributed here).
 4. Build the kernel (`kernel-packaging/README.md`), pack the boot image
    with the stock DTB, `tools/flash-safely.sh validate` it.
-5. Install the **Droidian 101 release** rootfs from TWRP, not the
-   current nightly (a later nightly already broke this port once - the
-   porting guide says how). Put the release's `.deb` in `out/` and its
-   ssh bundle in `out/ssh-debs/`, and inject both with
-   `adaptation/ssh/inject-ssh-twrp.sh` - the image ships no sshd.
+5. Install the **Droidian 102** nightly rootfs (`rootfs api30 arm64`,
+   phosh phone) from TWRP: only `data/rootfs.img` from the zip - never
+   flash the zip - grown to 8 GB. Put the release's `.deb` in `out/` and
+   inject it with `adaptation/ssh/inject-ssh-twrp.sh`. On Droidian 101,
+   0.18.0 is the release to use.
 6. `tools/flash-safely.sh ram-boot` - **RAM-boot only** until you have
    many boring-stable cycles behind you.
+7. The first boot installs the package and **reboots once, into
+   fastboot**; RAM-boot the same image again, and that is the real one.
+   Connect to Wi-Fi, run `sudo sfduo-shell-setup` and reboot: the
+   two-panel shell, the pen and the full-size root filesystem come with
+   it.
 
-7. The first boot installs the package and **reboots itself once**; the
-   second is the real one. When the device is online, `sudo
-   sfduo-shell-setup` gives the experimental two-panel shell what a clean
-   image lacks.
+This path was run end to end on an untouched Droidian 102 nightly
+(2026-09-27) with the 0.20 package; what it found is in the 0.20.0 notes.
+The first boot's reboot into fastboot came after that run and was tried on
+its own.
 
-This path was run end to end on an untouched 101 image in September 2026;
-what it found is in the 0.13.0 notes.
-
-Full walkthrough: [docs/PORT-GUIDE.md](docs/PORT-GUIDE.md).
+Full walkthrough: [docs/PORT-GUIDE.md](docs/PORT-GUIDE.md). Back to stock
+Android and from it to the port: [docs/STOCK-ANDROID.md](docs/STOCK-ANDROID.md).
 
 ## Known kernel traps (the expensive lessons)
 
