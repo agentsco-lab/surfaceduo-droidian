@@ -6,6 +6,11 @@ agents working in this repository; it is adapted from the rulebook of a larger
 project of the same maintainer, cut down to what a one-maintainer port with an outside
 collaborator needs.
 
+**Since 2026-09-27** the issues and the board are private: they live in a
+private tracker of agentsco-lab, and this repository's Issues are turned off.
+What follows is kept as the rulebook; its links to issues and to project 2
+are no longer public.
+
 ## The three layers
 
 | Layer | Lives in | Rule |
