@@ -56,6 +56,19 @@ Calculator and Contacts settle at 1008, 910 and 725 ms on the Duo 1 and 617,
 The restore went from ~450 to 59 ms with phoc 0026: work queued for the
 compositor's idle waited for the next unrelated client message.
 
+## Battery, the phone closed
+
+The phone folded, the display blanked, on battery, Wi-Fi and the modem on.
+
+| | Duo 1, 0.20 on 102 | Duo 1, 0.18 on 101 |
+|---|---|---|
+| Battery draw | 35-65 mA, readings after the fix | 58 mAh/h, a 6-hour average by the charge counter |
+
+On 102 the draw was ~150 mA at first: Droidian 102's mobile-power-saver
+lifted the NPU's memory bandwidth vote to its maximum with the screen off
+(#230, fixed in 0.20). A 6-hour average on 102 is still to be taken, and the
+closed phone has not been measured on stock Android.
+
 ## Stock Android, for reference
 
 Not yet measured the same way on the port.

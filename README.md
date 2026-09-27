@@ -82,9 +82,12 @@ Opening an app, from the request to its first frame, on the same Surface Duo 1
 | Phone, already running | 92 | 59 | 303 |
 | Messages, already running | 121 | 133 | 242 |
 | A minimized app back from the dock | - | 59 | 444-491 |
+| Opening the app grid, frames dropped | 2 | 0 | 0 |
+| Closed phone, battery draw, mA | - | 35-65 | 58 (6-hour average) |
 
 A third faster than on 101; stock Android still opens apps about twice as
-fast. All the numbers, the Surface Duo 2 beside them, and how they are taken:
+fast. The closed phone's draw on 102 is read after the fix of #230 (it was
+~150 mA before), not yet averaged over hours. All the numbers, the Surface Duo 2 beside them, and how they are taken:
 [docs/SPEED.md](docs/SPEED.md).
 
 ## Repository layout
