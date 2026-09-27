@@ -1007,6 +1007,7 @@ install -m755 "$SHELLDIR/sfduo-brightness" "$PKG/usr/local/bin/"
 install -m755 "$SHELLDIR/sfduo-shell-setup" "$PKG/usr/local/sbin/"
 install -m755 "$SHELLDIR/sfduo-phosh-install" "$PKG/usr/local/sbin/"
 install -Dm644 "$SYSTEM/systemd/60-sfduo-restart.conf" "$PKG/usr/lib/systemd/system/phosh.service.d/60-sfduo-restart.conf"
+install -Dm644 "$SYSTEM/systemd/70-sfduo-chvt.conf" "$PKG/usr/lib/systemd/system/phosh.service.d/70-sfduo-chvt.conf"
 # The patched shell programs are carried one build per Droidian release,
 # each under the exact version of the package it replaces:
 # /usr/lib/sfduo/<what>/<version>/<binary>. The install scripts take the one
