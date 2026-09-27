@@ -9,8 +9,10 @@ Wants=android_boot_completed.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/sbin/android_bootctl mark-boot-successful
-ExecStart=/usr/sbin/android_bootctl set-active-boot-slot 0
+# set active, then mark good (setting active clears the mark), read the mark
+# back - see sfduo-slot-guard
+ExecStart=/usr/local/sbin/sfduo-slot-guard
+TimeoutStartSec=150
 RemainAfterExit=yes
 
 [Install]

@@ -904,6 +904,7 @@ UNIT
 # The slot guard and the modem unit were hand-installed into /etc before
 # 0.13; postinst moves those copies out of the way of the packaged ones.
 install -m644 "$SYSTEM/sfduo-slot-guard.service" "$PKG/usr/lib/systemd/system/"
+install -m755 "$SYSTEM/sfduo-slot-guard" "$PKG/usr/local/sbin/"
 install -m644 "$SYSTEM/sfduo-modem.service"      "$PKG/usr/lib/systemd/system/"
 install -m755 "$SYSTEM/sfduo-modem"              "$PKG/usr/local/sbin/"
 # glycin decodes images without its bwrap sandbox: 1.3-1.8 s off the first
