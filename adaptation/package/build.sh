@@ -11,7 +11,7 @@ ACCESS="$HERE/../access"
 SYSTEM="$HERE/../system"
 SHELLDIR="$HERE/../shell"
 BUSYBOX="$ROOT/out/busybox-arm64"
-VER="${1:-0.18.0}"
+VER="${1:-0.20.0}"
 OUT="$ROOT/out"
 PKG="$OUT/pkgroot"
 
@@ -85,6 +85,24 @@ Before=NetworkManager.service
 Type=oneshot
 # The module for the running kernel; another kernel's would be refused anyway
 ExecStart=/bin/sh -c 'M=/usr/lib/sfduo/modules/$(uname -r)/wlan.ko; [ -f "$M" ] || { echo "sfduo-wlan: no wlan module for $(uname -r) in /usr/lib/sfduo/modules" >&2; exit 0; }; grep -q ^wlan /proc/modules || insmod "$M"'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    # The wait for phy0 and WoWLAN are a unit of their own: as this one's
+    # ExecStartPost they held it "activating" until the firmware was up -
+    # 22.6 s on 102 - and with it NetworkManager, network.target, the user
+    # sessions and phosh: the lock screen came 9 s after the display was
+    # ready, waiting for WiFi.
+    cat > "$PKG/usr/lib/systemd/system/sfduo-wowlan.service" <<'UNIT'
+[Unit]
+Description=sfduo: wake on the wlan magic packet
+After=sfduo-wlan.service
+Requires=sfduo-wlan.service
+
+[Service]
+Type=oneshot
 # WoWLAN keeps the association alive through deep sleep, so WiFi (and ssh
 # over it) come back instantly after a deliberate wake (wakeonlan <mac>).
 # magic-packet, NOT any: "any" means every LAN broadcast wakes the phone
@@ -92,7 +110,7 @@ ExecStart=/bin/sh -c 'M=/usr/lib/sfduo/modules/$(uname -r)/wlan.ko; [ -f "$M" ] 
 # wowlan on a live driver - a runtime enable-mode switch soft-locked a
 # qcacld thread and took all block I/O down with it (2026-07-12).
 # qcacld registers phy0 asynchronously (fw load can take 60s+) - wide retry
-ExecStartPost=/bin/sh -c 'for i in $(seq 1 45); do iw phy phy0 wowlan enable magic-packet 2>/dev/null && break; sleep 2; done; true'
+ExecStart=/bin/sh -c 'for i in $(seq 1 45); do iw phy phy0 wowlan enable magic-packet 2>/dev/null && break; sleep 2; done; true'
 RemainAfterExit=yes
 
 [Install]
@@ -462,6 +480,12 @@ cat > "$PKG/usr/lib/systemd/system/sfduo-grow-rootfs.service" <<'UNIT'
 [Unit]
 Description=sfduo: grow the root filesystem image into /userdata's free space, once
 ConditionPathExists=!/var/lib/sfduo/rootfs-grown
+# Not before resize2fs is there: Droidian 102's image ships without
+# e2fsprogs, and the file was grown to fill /userdata (fallocate - real
+# space) with nothing to grow the filesystem into it (2026-09-27, clean
+# install). Skipped, the unit leaves no mark and runs on the first boot
+# after sfduo-shell-setup has installed it.
+ConditionFileIsExecutable=/usr/sbin/resize2fs
 After=local-fs.target
 
 [Service]
@@ -882,6 +906,19 @@ UNIT
 install -m644 "$SYSTEM/sfduo-slot-guard.service" "$PKG/usr/lib/systemd/system/"
 install -m644 "$SYSTEM/sfduo-modem.service"      "$PKG/usr/lib/systemd/system/"
 install -m755 "$SYSTEM/sfduo-modem"              "$PKG/usr/local/sbin/"
+# glycin decodes images without its bwrap sandbox: 1.3-1.8 s off the first
+# image of every GTK3 process, phosh at each session start among them
+# (../system/sfduo-bwrap says why and how to undo it)
+install -Dm755 "$SYSTEM/sfduo-bwrap" "$PKG/usr/local/bin/bwrap"
+install -Dm644 "$SYSTEM/99-sfduo-ofono.conf" "$PKG/etc/NetworkManager/conf.d/99-sfduo-ofono.conf"
+# The pen as a pen (#24): the digitizer's node split into a touchscreen and a
+# tablet with pressure and buttons (../system/sfduo-pen-split)
+install -m755 "$SYSTEM/sfduo-pen-split"         "$PKG/usr/local/sbin/"
+install -m644 "$SYSTEM/sfduo-pen-split.service" "$PKG/usr/lib/systemd/system/"
+# the big cores for a starting app, on the dock's request (../system/sfduo-boost)
+install -m755 "$SYSTEM/sfduo-boost"         "$PKG/usr/local/sbin/"
+install -m644 "$SYSTEM/sfduo-boost.service" "$PKG/usr/lib/systemd/system/"
+install -m644 "$SYSTEM/sfduo-modem-watch.service" "$PKG/usr/lib/systemd/system/"
 # the CPUs off powersave while the screen is on (../system/sfduo-cpufreq:
 # mobile-power-saver misses the first screen-on at boot, and its dozing cycle
 # restarts on StopDozing with the screen on)
@@ -909,7 +946,13 @@ install -Dm644 "$SYSTEM/dconf/51-sfduo-background" "$PKG/etc/dconf/db/local.d/51
 install -Dm644 "$SYSTEM/dconf/52-sfduo-idle"       "$PKG/etc/dconf/db/local.d/52-sfduo-idle"
 install -Dm644 "$SYSTEM/dconf/53-sfduo-apps"       "$PKG/etc/dconf/db/local.d/53-sfduo-apps"
 install -Dm644 "$SYSTEM/dconf/54-sfduo-location"   "$PKG/etc/dconf/db/local.d/54-sfduo-location"
+install -Dm644 "$SYSTEM/dconf/55-sfduo-clock"      "$PKG/etc/dconf/db/local.d/55-sfduo-clock"
 install -Dm644 "$SYSTEM/90-sfduo-location.conf"    "$PKG/etc/geoclue/conf.d/90-sfduo-location.conf"
+# Droidian 102's mobile-power-saver caps devfreq with the screen off; on the
+# NPU's DDR vote that cap is 0, which 4.14 takes as none (the file says more).
+# glib's dpkg trigger compiles the schemas.
+install -Dm644 "$SYSTEM/60_sfduo-mps.gschema.override" \
+    "$PKG/usr/share/glib-2.0/schemas/60_sfduo-mps.gschema.override"
 # Applications (2026-09-18): the grid hides what the port does not want
 # (../system/apps/hidden.list - an override per desktop id in
 # /usr/local/share/applications, which XDG_DATA_DIRS lists first; the
@@ -917,6 +960,7 @@ install -Dm644 "$SYSTEM/90-sfduo-location.conf"    "$PKG/etc/geoclue/conf.d/90-s
 # once the device is online (Telegram, what Claude Code needs).
 install -m755  "$SYSTEM/sfduo-apps"       "$PKG/usr/local/sbin/"
 install -Dm644 "$SYSTEM/apps/hidden.list"           "$PKG/usr/lib/sfduo/apps/hidden.list"
+install -Dm644 "$SYSTEM/phosh-mimeapps.list"        "$PKG/etc/xdg/phosh-mimeapps.list"
 install -Dm644 "$SYSTEM/apps/cool-retro-term.json"  "$PKG/usr/lib/sfduo/apps/cool-retro-term.json"
 # Settings (#77, #78). sfduo-settings is the one Settings in the grid: the
 # pages of GNOME Settings and Mobile Settings grouped for this device, opened
@@ -962,12 +1006,30 @@ install -m755 "$SHELLDIR/sfduo-dock"       "$PKG/usr/local/bin/"
 install -m755 "$SHELLDIR/sfduo-brightness" "$PKG/usr/local/bin/"
 install -m755 "$SHELLDIR/sfduo-shell-setup" "$PKG/usr/local/sbin/"
 install -m755 "$SHELLDIR/sfduo-phosh-install" "$PKG/usr/local/sbin/"
-# The patched phosh (../shell/phosh-patches 0001-0019), built per
-# ../shell/README.md. Version-locked: see sfduo-phosh-install.
-PHOSH_BIN="$ROOT/out/phosh/phosh-0.49.0-cf38ab5-sfduo"
-if [ -f "$PHOSH_BIN" ]; then
-    install -Dm755 "$PHOSH_BIN" "$PKG/usr/lib/sfduo/phosh/phosh"
-    echo "0.49.0+git20250824213429.cf38ab5.next.phosh.0.49" > "$PKG/usr/lib/sfduo/phosh/version"
+install -Dm644 "$SYSTEM/systemd/60-sfduo-restart.conf" "$PKG/usr/lib/systemd/system/phosh.service.d/60-sfduo-restart.conf"
+# The patched shell programs are carried one build per Droidian release,
+# each under the exact version of the package it replaces:
+# /usr/lib/sfduo/<what>/<version>/<binary>. The install scripts take the one
+# that matches what is installed and leave anything else alone.
+carry() {   # carry DIR BINARY SOURCE VERSION
+    if [ -f "$3" ]; then
+        install -Dm755 "$3" "$PKG/usr/lib/sfduo/$1/$4/$2"
+    else
+        echo "NOTE: $3 not found - building without it"
+        return 1
+    fi
+}
+# The patched phosh, built per ../shell/README.md: on Droidian 101 phosh 0.49
+# with ../shell/phosh-patches 0001-0019, on 102 phosh 0.55 with the same
+# patches rebased (../shell/phosh-patches-0.55; 0007 left out - 0.55 shares
+# one brightness between the shades itself). Version-locked: see
+# sfduo-phosh-install.
+PHOSH_ANY=
+carry phosh phosh "$ROOT/out/phosh/phosh-0.49.0-cf38ab5-sfduo" \
+    "0.49.0+git20250824213429.cf38ab5.next.phosh.0.49" && PHOSH_ANY=1
+carry phosh phosh "$ROOT/out/phosh/phosh-0.55.0-bee1861-sfduo" \
+    "0.55.0+git20260824233009.bee1861.next.phosh.0.55" && PHOSH_ANY=1
+if [ -n "$PHOSH_ANY" ]; then
     # The hinge, described to gmobile as a cutout running the display's whole
     # height. It is staged here and copied into /var/lib/droidian/phosh-notch,
     # where Droidian's phosh.service already points G_RESOURCE_OVERLAYS and
@@ -979,10 +1041,8 @@ if [ -f "$PHOSH_BIN" ]; then
     # and takes it away again on --restore.
     install -Dm644 "$SHELLDIR/qcom,sm8150-mtp.json" \
         "$PKG/usr/lib/sfduo/phosh/display-panels/qcom,sm8150-mtp.json"
-else
-    echo "NOTE: $PHOSH_BIN not found - building without the patched phosh"
 fi
-# The patched phoc (../shell/phoc-patches/0001-0019): tiled windows stop
+# The patched phoc (../shell/phoc-patches/0001-0024): tiled windows stop
 # short of the hinge named by `tiling-seam` in phoc.ini, a new window opens
 # on the panel touched last, a closed one fades away and a minimized one
 # drops to the bottom edge, a bar giving up its reservation gives it up at
@@ -991,27 +1051,29 @@ fi
 # wide for a panel is fitted into it; frame done goes to the clients before
 # the repaint, not after hwcomposer's swap, and a drag down on the dock's
 # catcher over an empty panel pulls that panel's shade, and a window brought
-# back from the dock shows at its first frame. Version-locked like phosh:
-# see sfduo-phoc-install. Built per ../shell/README.md.
+# back from the dock shows at its first frame; a keyboard on one panel
+# reserves that panel's bottom, a window drawing into subsurfaces of its own
+# (Firefox) slides itself to the other panel, a move to the other panel
+# turns like a page about the hinge (#239), the folded bars' pixels are not
+# taken from windows, and a tiled window is tiled on all four edges.
+# Version-locked like phosh: see sfduo-phoc-install. Built per
+# ../shell/README.md.
 install -m755 "$SHELLDIR/sfduo-phoc-install" "$PKG/usr/local/sbin/"
-PHOC_BIN="$ROOT/out/phoc/phoc-0.47.0-98211ea-sfduo"
-if [ -f "$PHOC_BIN" ]; then
-    install -Dm755 "$PHOC_BIN" "$PKG/usr/lib/sfduo/phoc/phoc"
-    echo "0.47.0-1~git20250520212245.98211ea.next.phosh.0.47" > "$PKG/usr/lib/sfduo/phoc/version"
-else
-    echo "NOTE: $PHOC_BIN not found - building without the patched phoc"
-fi
-# The patched on-screen keyboard (../shell/osk-patches/0001, 0002): on this
-# display it takes the right panel instead of both, with 60 px key rows.
-# Version-locked like the others.
+# The same patches on both releases: 102's phoc is 101's source rebuilt.
+# 0.20 is built for 102; 101's binary is 0.18's, without 0021-0024.
+carry phoc phoc "$ROOT/out/phoc/phoc-0.47.0-98211ea-sfduo" \
+    "0.47.0-1~git20250520212245.98211ea.next.phosh.0.47" || true
+carry phoc phoc "$ROOT/out/phoc/phoc-0.47.0-7e682c6-sfduo" \
+    "0.47.0-1~git20260824230949.7e682c6.next.phosh.0.47" || true
+# The patched on-screen keyboard: on this display it takes the right panel
+# instead of both, with 60 px key rows. phosh-osk-stub on 101
+# (../shell/osk-patches), renamed phosh-osk-stevia on 102
+# (../shell/osk-patches-stevia). Version-locked like the others.
 install -m755 "$SHELLDIR/sfduo-osk-install" "$PKG/usr/local/sbin/"
-OSK_BIN="$ROOT/out/osk/phosh-osk-stub-0.47.0-43ef51f-sfduo"
-if [ -f "$OSK_BIN" ]; then
-    install -Dm755 "$OSK_BIN" "$PKG/usr/lib/sfduo/osk/phosh-osk-stub"
-    echo "0.47.0+git20250520212740.43ef51f.next.phosh.0.47" > "$PKG/usr/lib/sfduo/osk/version"
-else
-    echo "NOTE: $OSK_BIN not found - building without the patched keyboard"
-fi
+carry osk/phosh-osk-stub phosh-osk-stub "$ROOT/out/osk/phosh-osk-stub-0.47.0-43ef51f-sfduo" \
+    "0.47.0+git20250520212740.43ef51f.next.phosh.0.47" || true
+carry osk/phosh-osk-stevia phosh-osk-stevia "$ROOT/out/osk/phosh-osk-stevia-0.55.0-cfcbe7a-sfduo" \
+    "0.55.0+git20260824233138.cfcbe7a.next.phosh.0.55" || true
 # The shell and the output scale as two switches (#20): sfduo-shell wraps the
 # three install scripts above and the scale line in phoc.ini; Settings runs
 # it through pkexec, which the policy names.
@@ -1022,6 +1084,8 @@ install -Dm644 "$SHELLDIR/sfduo-dock.desktop"       "$PKG/etc/xdg/autostart/sfdu
 # swipe right on its desktop (the dock catches it). GTK4, a program of its own.
 install -m755  "$SHELLDIR/sfduo-system-screen"         "$PKG/usr/local/bin/"
 install -Dm644 "$SHELLDIR/sfduo-system-screen.desktop" "$PKG/etc/xdg/autostart/sfduo-system-screen.desktop"
+install -m755  "$SHELLDIR/sfduo-pen-screen"            "$PKG/usr/local/bin/"
+install -Dm644 "$SHELLDIR/sfduo-pen-screen.desktop"    "$PKG/etc/xdg/autostart/sfduo-pen-screen.desktop"
 # The hinge, read once and told to everyone: org.sfduo.Posture on the
 # session bus - the smoothed angle, the posture, whether it is moving (#55)
 install -m755  "$SHELLDIR/sfduo-posture"            "$PKG/usr/local/bin/"
@@ -1040,6 +1104,17 @@ install -m755  "$SHELLDIR/sfduo-fingerprint"        "$PKG/usr/local/bin/"
 install -Dm644 "$SHELLDIR/sfduo-fingerprint.desktop" "$PKG/etc/xdg/autostart/sfduo-fingerprint.desktop"
 mkdir -p "$PKG/etc/systemd/user"
 ln -s /dev/null "$PKG/etc/systemd/user/fpd-unlockd.service"
+# A finger gives PAM no password, so the login keyring stayed locked after
+# every boot, asked for one, and crashed gnome-keyring when two programs
+# asked at once. The port keeps it with no password of its own (the owner's
+# choice): a user without one gets it made that way before gnome-keyring
+# starts; `sfduo-keyring-open` in a terminal takes the password off one
+# that has it.
+install -m755  "$SYSTEM/sfduo-keyring-open"         "$PKG/usr/local/bin/"
+install -Dm644 "$SYSTEM/sfduo-keyring-open.service" "$PKG/usr/lib/systemd/user/sfduo-keyring-open.service"
+mkdir -p "$PKG/etc/systemd/user/default.target.wants"
+ln -s /usr/lib/systemd/user/sfduo-keyring-open.service \
+    "$PKG/etc/systemd/user/default.target.wants/sfduo-keyring-open.service"
 install -Dm644 "$SHELLDIR/dock.json" "$PKG/usr/share/sfduo/dock.json.example"
 # the port's version, for the system screen's device card (#119): dpkg's
 # status is a 1.6 MB file to look it up in
@@ -1071,7 +1146,7 @@ Architecture: arm64
 Maintainer: Ivan Verbovoy <ivanverbovoy@gmail.com>
 Section: misc
 Priority: optional
-Recommends: python3-gi, python3-gi-cairo, python3-cairo, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, wlrctl, wtype, dconf-cli, gir1.2-gtk-4.0, gir1.2-gtk4layershell-1.0, gir1.2-adw-1, gir1.2-ecal-2.0, gir1.2-edataserver-1.2
+Recommends: python3-gi, python3-gi-cairo, python3-cairo, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, wlrctl, wtype, dconf-cli, gir1.2-gtk-4.0, gir1.2-gtk4layershell-1.0, libgtk4-layer-shell0, gir1.2-adw-1, gir1.2-ecal-2.0, gir1.2-edataserver-1.2, python3-evdev, e2fsprogs
 Description: Surface Duo 1 adaptation for Droidian (sfduo)
  USB RNDIS gadget access (172.16.42.1, telnet fallback) and, as bring-up
  progresses, touch / wifi / sensor plumbing for the Microsoft Surface Duo 1.
@@ -1260,6 +1335,9 @@ if [ -d /run/systemd/system ]; then
     systemctl daemon-reload
     en sfduo-slot-guard.service || true
     en_now sfduo-modem.service || true
+    en_now sfduo-modem-watch.service || true
+    en_now sfduo-pen-split.service || true
+    en_now sfduo-boost.service || true
     en_now sfduo-cpufreq.service || true
     en_now sfduo-usb.service || true
     en bluebinder.service bluetooth.service 2>/dev/null || true
@@ -1272,6 +1350,7 @@ if [ -d /run/systemd/system ]; then
     udevadm control --reload 2>/dev/null || true
     udevadm trigger -s backlight -s leds 2>/dev/null || true
     [ -d /usr/lib/sfduo/modules ] && en_now sfduo-wlan.service || true
+    [ -e /usr/lib/systemd/system/sfduo-wowlan.service ] && en sfduo-wowlan.service || true
     # sfduo-tame-vendor kills adsprpcd, and sfduo-audio.service is what
     # boots the ADSP afterwards. Measured on hardware: adsprpcd cannot
     # bring the ADSP up on this port at all, so with no starter the
@@ -1300,6 +1379,12 @@ else
        /etc/systemd/system/multi-user.target.wants/sfduo-grow-rootfs.service
     ln -sf /usr/lib/systemd/system/sfduo-modem.service \
        /etc/systemd/system/multi-user.target.wants/sfduo-modem.service
+    ln -sf /usr/lib/systemd/system/sfduo-modem-watch.service \
+       /etc/systemd/system/multi-user.target.wants/sfduo-modem-watch.service
+    ln -sf /usr/lib/systemd/system/sfduo-pen-split.service \
+       /etc/systemd/system/multi-user.target.wants/sfduo-pen-split.service
+    ln -sf /usr/lib/systemd/system/sfduo-boost.service \
+       /etc/systemd/system/multi-user.target.wants/sfduo-boost.service
     mkdir -p /etc/systemd/system/graphical.target.wants
     ln -sf /usr/lib/systemd/system/sfduo-cpufreq.service \
        /etc/systemd/system/graphical.target.wants/sfduo-cpufreq.service
