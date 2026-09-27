@@ -1,0 +1,26 @@
+diff --git a/src/wwan/phosh-wwan-mm.c b/src/wwan/phosh-wwan-mm.c
+index ac9b5ab9..55da95fe 100644
+--- a/src/wwan/phosh-wwan-mm.c
++++ b/src/wwan/phosh-wwan-mm.c
+@@ -87,7 +87,7 @@ phosh_wwan_mm_user_friendly_access_tec (guint access_tec)
+   if (access_tec & MM_MODEM_ACCESS_TECHNOLOGY_5GNR) {
+     return "5G";
+   } else if (access_tec & MM_MODEM_ACCESS_TECHNOLOGY_LTE) {
+-    return "4G";
++    return "LTE";
+   } else if (access_tec & MM_MODEM_ACCESS_TECHNOLOGY_HSPA_PLUS) {
+     return "3.75G";
+   } else if (access_tec & MM_MODEM_ACCESS_TECHNOLOGY_HSPA) {
+diff --git a/src/wwan/phosh-wwan-ofono.c b/src/wwan/phosh-wwan-ofono.c
+index b25bd319..0bc55261 100644
+--- a/src/wwan/phosh-wwan-ofono.c
++++ b/src/wwan/phosh-wwan-ofono.c
+@@ -92,7 +92,7 @@ phosh_wwan_ofono_user_friendly_access_tec (const char *access_tec)
+   if (g_strcmp0 (access_tec, "hspa") == 0)
+     return "3.5G";
+   if (g_strcmp0 (access_tec, "lte") == 0)
+-    return "4G";
++    return "LTE";
+   if (g_strcmp0 (access_tec, "nr") == 0)
+     return "5G";
+ 

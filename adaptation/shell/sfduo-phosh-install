@@ -36,8 +36,17 @@
 # black screen with nothing drawn in it. So the file is present exactly when
 # the patched binary is.
 set -e
-OURS=/usr/lib/sfduo/phosh/phosh
-WANT=$(cat /usr/lib/sfduo/phosh/version 2>/dev/null || true)
+# One build per Droidian release, each in a directory named after the
+# exact phosh version it was built for (101 and 102 for 0.20); packages
+# before 0.20 had one build with its version in a file beside it.
+HAVE=$(dpkg-query -W -f='${Version}' phosh 2>/dev/null || true)
+if [ -n "$HAVE" ] && [ -f "/usr/lib/sfduo/phosh/$HAVE/phosh" ]; then
+    OURS=/usr/lib/sfduo/phosh/$HAVE/phosh
+    WANT=$HAVE
+else
+    OURS=/usr/lib/sfduo/phosh/phosh
+    WANT=$(cat /usr/lib/sfduo/phosh/version 2>/dev/null || true)
+fi
 BIN=/usr/libexec/phosh
 STOCK=/usr/libexec/phosh.stock
 KEEP_STOCK=/etc/sfduo/phosh-stock
@@ -130,7 +139,6 @@ case "$1" in
 esac
 
 [ -f "$OURS" ] && [ -n "$WANT" ] || { echo "sfduo-phosh: no patched binary in this package"; tiling_lock off; hinge_description off; exit 0; }
-HAVE=$(dpkg-query -W -f='${Version}' phosh 2>/dev/null || true)
 if [ "$HAVE" != "$WANT" ]; then
     echo "sfduo-phosh: phosh is $HAVE, the patched binary is for $WANT - left alone;"
     echo "sfduo-phosh: windows will not tile to a panel on this phosh (see adaptation/shell/README.md)"

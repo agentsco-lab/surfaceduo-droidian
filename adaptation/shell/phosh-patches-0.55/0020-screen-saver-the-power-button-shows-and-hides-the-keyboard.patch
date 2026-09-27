@@ -1,0 +1,43 @@
+diff --git a/src/screen-saver-manager.c b/src/screen-saver-manager.c
+index a7aed65a..440d7fa8 100644
+--- a/src/screen-saver-manager.c
++++ b/src/screen-saver-manager.c
+@@ -15,6 +15,8 @@
+ #include "login1-manager-dbus.h"
+ #include "login1-session-dbus.h"
+ #include "lockscreen-manager.h"
++#include "layout-manager.h"
++#include "osk-manager.h"
+ #include "session-presence.h"
+ #include "util.h"
+ 
+@@ -227,6 +229,29 @@ on_power_button_pressed (GSimpleAction *action, GVariant *param, gpointer data)
+   if (self->long_press_id == 0)
+     return;
+ 
++  /* A display with a seam is a folding phone: closing it locks and blanks
++   * it, opening it wakes it, and the power button is free. With the screen
++   * on and unlocked a short press shows or hides the on-screen keyboard
++   * instead - which a field that already has the focus cannot bring back,
++   * and which nothing else on this shell can. Blanked or locked, the
++   * button still does what it always did, and a long press is still the
++   * power menu. */
++  {
++    PhoshShell *shell = phosh_shell_get_default ();
++    PhoshOskManager *osk = phosh_shell_get_osk_manager (shell);
++    GdkRectangle seam;
++
++    if (osk && !phosh_shell_get_locked (shell) &&
++        phosh_layout_manager_get_seam (phosh_shell_get_layout_manager (shell), &seam)) {
++      gboolean visible = phosh_osk_manager_get_visible (osk);
++
++      g_debug ("Power button released: keyboard %s", visible ? "hidden" : "shown");
++      phosh_osk_manager_set_visible (osk, !visible);
++      g_clear_handle_id (&self->long_press_id, g_source_remove);
++      return;
++    }
++  }
++
+   g_debug ("Power button released, activating screensaver");
+   screen_saver_set_active (self, TRUE, self->lock_enabled);
+ 

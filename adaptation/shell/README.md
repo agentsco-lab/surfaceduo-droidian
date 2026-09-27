@@ -767,6 +767,37 @@ gsettings set org.gnome.desktop.background picture-options 'none'
 gsettings set org.gnome.desktop.background primary-color '#000000'
 ```
 
+### On Droidian 102 (0.20)
+
+The package carries a build of each patched program per Droidian release,
+under the exact version of the package it replaces
+(`/usr/lib/sfduo/<program>/<version>/`); the install scripts put in the one
+that matches what is installed and leave any other version alone.
+
+- **phoc**: 102's phoc is 101's source rebuilt (droidian/phoc 7e682c6 is a
+  rebuild commit on 98211ea), so `phoc-patches/` apply unchanged. 0.20
+  carries 0001-0026 for 102 only; the 101 build is 0.18's (0001-0019).
+- **phosh**: 102 has phosh 0.55. `phosh-patches-0.55/` is `phosh-patches/`
+  rebased onto droidian/phosh `group/next/phosh-0.55` (bee1861): 0007 is
+  left out, since 0.55's brightness manager already gives every shade's
+  scale one shared adjustment, and three places are adapted to 0.55
+  (`battery-info.h`, the settings menu's close helper, the seam declared in
+  `panels_create`).
+- **The keyboard**: 102's is phosh-osk-stevia, phosh-osk-stub renamed.
+  `osk-patches-stevia/` carries the same two changes onto droidian's
+  `group/next/phosh-0.55` (cfcbe7a), and three more: the keyboard goes to
+  the panel of the window typed into, its slide runs on a timer of its own,
+  and the power button's keyboard puts the focus in the active window's
+  field while a new window's own focus leaves it down. Stevia sizes itself for the display's
+  physical height (355 px here, rows of 88); on a display with a seam the
+  patch keeps the four 60 px rows of 101 instead.
+
+These three were built on the phone itself, on 102, against its own
+libraries: the build dependencies from each tree's `debian/control`,
+`meson setup _build --prefix=/usr --libdir=lib/aarch64-linux-gnu` with the
+options in its `debian/rules`, `ninja -C _build`. Six cores build phosh in a
+few minutes, faster than the arm64 container under qemu.
+
 ## Checking it without a finger
 
 `grim` needs the output awake or it fails with "failed to copy output":

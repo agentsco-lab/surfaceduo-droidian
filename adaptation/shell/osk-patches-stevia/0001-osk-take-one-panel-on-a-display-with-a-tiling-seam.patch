@@ -1,0 +1,117 @@
+From 78f4aa39ddeca49b42ea118fba902b9175240116 Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+Date: Thu, 24 Sep 2026 23:52:35 +0300
+Subject: [PATCH 1/2] osk: take one panel on a display with a tiling seam
+
+---
+ src/phosh-osk-stevia.c | 68 ++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 65 insertions(+), 3 deletions(-)
+
+diff --git a/src/phosh-osk-stevia.c b/src/phosh-osk-stevia.c
+index c6923c3..155cb1a 100644
+--- a/src/phosh-osk-stevia.c
++++ b/src/phosh-osk-stevia.c
+@@ -19,6 +19,7 @@
+ #include <glib-unix.h>
+ 
+ #include <gtk/gtk.h>
++#include <string.h>
+ #include <gdk/gdkwayland.h>
+ 
+ #include <libfeedback.h>
+@@ -258,6 +259,59 @@ dispose_input_surface (PosApp *self)
+ 
+ 
+ 
++/*
++ * A display made of two panels with a hinge between them (the Surface Duo:
++ * phoc's configuration names the hidden column as a `tiling-seam`, a
++ * fraction of the output's width) is one output to the compositor, and a
++ * keyboard anchored to both edges runs across the bezel - half the keys on
++ * each panel and a dead column through the middle. On such a display the
++ * keyboard takes one panel: the right one, under the thumb, in landscape.
++ * In portrait the panels are stacked and a full-width keyboard is right.
++ *
++ * Returns the panel's width in logical pixels, or 0 for an ordinary display.
++ */
++static int
++panel_width_for_seam (void)
++{
++  const char *paths[] = { "/etc/phosh/phoc.ini", "/usr/share/phosh/phoc.ini", NULL };
++  double seam = 0.0;
++  GdkDisplay *display;
++  GdkMonitor *monitor;
++  GdkRectangle geom;
++
++  for (int i = 0; paths[i]; i++) {
++    g_autofree char *contents = NULL;
++    g_auto (GStrv) lines = NULL;
++    gboolean in_output = FALSE;
++
++    if (!g_file_get_contents (paths[i], &contents, NULL, NULL))
++      continue;
++    lines = g_strsplit (contents, "\n", -1);
++    for (int l = 0; lines[l]; l++) {
++      g_strstrip (lines[l]);
++      if (lines[l][0] == '[')
++        in_output = g_str_has_prefix (lines[l], "[output:");
++      else if (in_output && g_str_has_prefix (lines[l], "tiling-seam"))
++        seam = g_ascii_strtod (strchr (lines[l], '=') ? strchr (lines[l], '=') + 1 : "0", NULL);
++    }
++    break;              /* phosh-session takes the first file that exists */
++  }
++  if (seam <= 0.0 || seam >= 1.0)
++    return 0;
++
++  display = gdk_display_get_default ();
++  monitor = gdk_display_get_primary_monitor (display);
++  if (!monitor)
++    monitor = gdk_display_get_monitor (display, 0);
++  if (!monitor)
++    return 0;
++  gdk_monitor_get_geometry (monitor, &geom);
++  if (geom.width <= geom.height)
++    return 0;           /* portrait: the panels are stacked, the keyboard spans one */
++
++  return (geom.width - (int) (seam * geom.width + 0.5)) / 2;
++}
++
+ static void
+ create_input_surface (PosApp *self)
+ {
+@@ -268,6 +322,7 @@ create_input_surface (PosApp *self)
+   g_autoptr (PosClipboardManager) clipboard_manager = NULL;
+   PosWayland *wayland = pos_wayland_get_default ();
+   gboolean force_completion;
++  int panel;
+ 
+   g_assert (POS_IS_APP (self));
+   g_assert (POS_IS_OSK_DBUS (self->osk_dbus));
+@@ -286,14 +341,21 @@ create_input_surface (PosApp *self)
+                           pos_wayland_get_wl_seat (wayland));
+ 
+   force_completion = !!(_debug_flags & POS_DEBUG_FLAG_FORCE_COMPLETEION);
++  panel = panel_width_for_seam ();
++  if (panel)
++    g_debug ("Two-panel display: keyboard on the right panel, %d px wide", panel);
+   self->input_surface = g_object_new (POS_TYPE_INPUT_SURFACE,
+                                       "min-height", POS_INPUT_SURFACE_DEFAULT_HEIGHT,
+                                       /* layer-surface */
+                                       "layer-shell", pos_wayland_get_zwlr_layer_shell_v1 (wayland),
+                                       "height", POS_INPUT_SURFACE_DEFAULT_HEIGHT,
+-                                      "anchor", ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
+-                                      ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
+-                                      ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT,
++                                      "width", panel,
++                                      "anchor", panel ?
++                                      (ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
++                                       ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT) :
++                                      (ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
++                                       ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
++                                       ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT),
+                                       "layer", ZWLR_LAYER_SHELL_V1_LAYER_TOP,
+                                       "kbd-interactivity", FALSE,
+                                       "exclusive-zone", POS_INPUT_SURFACE_DEFAULT_HEIGHT,
+-- 
+2.43.0
+

@@ -1,0 +1,88 @@
+From 5ef679406f18e1bfc16473714c956942d65d3849 Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+Date: Thu, 24 Sep 2026 23:57:34 +0300
+Subject: [PATCH 2/2] osk: taller key rows on a two-panel display
+
+---
+ src/phosh-osk-stevia.c | 34 ++++++++++++++++++++++++----------
+ 1 file changed, 24 insertions(+), 10 deletions(-)
+
+diff --git a/src/phosh-osk-stevia.c b/src/phosh-osk-stevia.c
+index 155cb1a..462ff67 100644
+--- a/src/phosh-osk-stevia.c
++++ b/src/phosh-osk-stevia.c
+@@ -270,6 +270,8 @@ dispose_input_surface (PosApp *self)
+  *
+  * Returns the panel's width in logical pixels, or 0 for an ordinary display.
+  */
++#define SFDUO_KEY_ROW 60
++
+ static int
+ panel_width_for_seam (void)
+ {
+@@ -323,6 +325,7 @@ create_input_surface (PosApp *self)
+   PosWayland *wayland = pos_wayland_get_default ();
+   gboolean force_completion;
+   int panel;
++  guint height = POS_INPUT_SURFACE_DEFAULT_HEIGHT;
+ 
+   g_assert (POS_IS_APP (self));
+   g_assert (POS_IS_OSK_DBUS (self->osk_dbus));
+@@ -342,13 +345,22 @@ create_input_surface (PosApp *self)
+ 
+   force_completion = !!(_debug_flags & POS_DEBUG_FLAG_FORCE_COMPLETEION);
+   panel = panel_width_for_seam ();
+-  if (panel)
+-    g_debug ("Two-panel display: keyboard on the right panel, %d px wide", panel);
++  if (panel) {
++    /* One panel wide, and its own height: the size manager scales the
++     * keyboard to a physical height for the whole display - 45 mm on the
++     * Surface Duo's 114 mm, 355 px, rows of 88 px on a panel 675 px wide.
++     * The output scale is chosen for the whole display too (2, where 2.5 is
++     * the panels' density), so 50 px rows come out a fifth lower than a
++     * thumb wants and 60 puts them back: four rows of 60. */
++    height = SFDUO_KEY_ROW * 4;
++    g_debug ("Two-panel display: keyboard on the right panel, %d px wide, %u px high",
++             panel, height);
++  }
+   self->input_surface = g_object_new (POS_TYPE_INPUT_SURFACE,
+-                                      "min-height", POS_INPUT_SURFACE_DEFAULT_HEIGHT,
++                                      "min-height", height,
+                                       /* layer-surface */
+                                       "layer-shell", pos_wayland_get_zwlr_layer_shell_v1 (wayland),
+-                                      "height", POS_INPUT_SURFACE_DEFAULT_HEIGHT,
++                                      "height", height,
+                                       "width", panel,
+                                       "anchor", panel ?
+                                       (ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
+@@ -358,7 +370,7 @@ create_input_surface (PosApp *self)
+                                        ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT),
+                                       "layer", ZWLR_LAYER_SHELL_V1_LAYER_TOP,
+                                       "kbd-interactivity", FALSE,
+-                                      "exclusive-zone", POS_INPUT_SURFACE_DEFAULT_HEIGHT,
++                                      "exclusive-zone", height,
+                                       "namespace", "osk",
+                                       /* pos-input-surface */
+                                       "input-method", im,
+@@ -381,11 +393,13 @@ create_input_surface (PosApp *self)
+                                NULL,
+                                self,
+                                NULL);
+-  g_object_bind_property (self->size_manager,
+-                          "height",
+-                          self->input_surface,
+-                          "min-height",
+-                          G_BINDING_SYNC_CREATE);
++  if (!panel) {
++    g_object_bind_property (self->size_manager,
++                            "height",
++                            self->input_surface,
++                            "min-height",
++                            G_BINDING_SYNC_CREATE);
++  }
+   g_object_bind_property (self->size_manager,
+                           "dead-zone",
+                           self->input_surface,
+-- 
+2.43.0
+

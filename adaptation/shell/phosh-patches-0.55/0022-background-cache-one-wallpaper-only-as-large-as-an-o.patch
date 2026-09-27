@@ -1,0 +1,231 @@
+From 1869161908062e1b10189b2ac34bd3a407c0f27a Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+Date: Sat, 26 Sep 2026 16:07:27 +0300
+Subject: [PATCH] background-cache: one wallpaper, only as large as an output
+ needs
+
+A wallpaper was decoded at its own size and kept for as long as phosh ran:
+GNOME's 4096x4096 ones are 64 MB each. And kept twice - the background and
+the lock screen ask for it as phosh starts, before either load is done, and
+each started its own (#173). The second fetch now waits for the load in
+progress, and the image kept is scaled down to what covers the largest
+output, turned either way: every style phosh draws scales it to an output
+anyway. 2784x2784 for the Duo, one copy: 31 MB instead of 128.
+---
+ src/background-cache.c | 81 +++++++++++++++++++++++++++++++++++-------
+ src/background-image.c | 46 ++++++++++++++++++++++++
+ src/background-image.h |  3 ++
+ 3 files changed, 117 insertions(+), 13 deletions(-)
+
+diff --git a/src/background-cache.c b/src/background-cache.c
+index cdd24f66..6dd314e4 100644
+--- a/src/background-cache.c
++++ b/src/background-cache.c
+@@ -15,6 +15,7 @@
+ #include "util.h"
+ 
+ #include <gio/gio.h>
++#include <gdk/gdk.h>
+ 
+ /**
+  * PhoshBackgroundCache:
+@@ -26,31 +27,65 @@ struct _PhoshBackgroundCache {
+   GObject     parent;
+ 
+   GHashTable *background_images;
++  /* files being loaded, and the fetches waiting for each (GPtrArray of GTask) */
++  GHashTable *loading;
+ };
+ G_DEFINE_TYPE (PhoshBackgroundCache, phosh_background_cache, G_TYPE_OBJECT)
+ 
+ 
++/* The largest output, in pixels */
++static void
++get_largest_output (int *width, int *height)
++{
++  GdkDisplay *display = gdk_display_get_default ();
++
++  *width = *height = 0;
++  if (display == NULL)
++    return;
++
++  for (int i = 0; i < gdk_display_get_n_monitors (display); i++) {
++    GdkMonitor *monitor = gdk_display_get_monitor (display, i);
++    int scale = gdk_monitor_get_scale_factor (monitor);
++    GdkRectangle geometry;
++
++    gdk_monitor_get_geometry (monitor, &geometry);
++    *width = MAX (*width, geometry.width * scale);
++    *height = MAX (*height, geometry.height * scale);
++  }
++}
++
++
+ static void
+ on_background_image_loaded (GObject *source_object, GAsyncResult *res, gpointer user_data)
+ {
+-  g_autoptr (GTask) task = G_TASK (user_data);
+-  PhoshBackgroundCache *self;
+-  PhoshBackgroundImage *image;
+-  GError *err = NULL;
+-  GFile *file;
++  g_autoptr (GFile) file = G_FILE (user_data);
++  g_autoptr (PhoshBackgroundImage) image = NULL;
++  g_autoptr (GPtrArray) waiting = NULL;
++  g_autoptr (GError) err = NULL;
++  PhoshBackgroundCache *self = phosh_background_cache_get_default ();
+ 
+   image = phosh_background_image_new_finish (res, &err);
+-  if (!image) {
+-    g_task_return_error (task, err);
++  if (self == NULL)
+     return;
++  g_hash_table_steal_extended (self->loading, file, NULL, (gpointer *) &waiting);
++
++  if (image) {
++    int width, height;
++
++    /* kept for as long as phosh runs: only as large as any output needs */
++    get_largest_output (&width, &height);
++    phosh_background_image_shrink_to (image, width, height);
++    g_hash_table_insert (self->background_images, g_object_ref (file), g_object_ref (image));
+   }
+ 
+-  self = PHOSH_BACKGROUND_CACHE (g_task_get_source_object (task));
+-  g_return_if_fail (PHOSH_IS_BACKGROUND_CACHE (self));
+-  file = phosh_background_image_get_file (image);
+-  g_hash_table_insert (self->background_images, g_object_ref (file), g_object_ref (image));
++  for (guint i = 0; waiting && i < waiting->len; i++) {
++    GTask *task = g_ptr_array_index (waiting, i);
+ 
+-  g_task_return_pointer (task, g_steal_pointer (&image), g_object_unref);
++    if (image)
++      g_task_return_pointer (task, g_object_ref (image), g_object_unref);
++    else
++      g_task_return_error (task, g_error_copy (err));
++  }
+ }
+ 
+ 
+@@ -60,6 +95,7 @@ phosh_background_cache_finalize (GObject *object)
+   PhoshBackgroundCache *self = PHOSH_BACKGROUND_CACHE (object);
+ 
+   g_clear_pointer (&self->background_images, g_hash_table_destroy);
++  g_clear_pointer (&self->loading, g_hash_table_destroy);
+ 
+   G_OBJECT_CLASS (phosh_background_cache_parent_class)->finalize (object);
+ }
+@@ -81,6 +117,10 @@ phosh_background_cache_init (PhoshBackgroundCache *self)
+                                                    (GEqualFunc) g_file_equal,
+                                                    g_object_unref,
+                                                    g_object_unref);
++  self->loading = g_hash_table_new_full (g_file_hash,
++                                         (GEqualFunc) g_file_equal,
++                                         g_object_unref,
++                                         (GDestroyNotify) g_ptr_array_unref);
+ }
+ 
+ /**
+@@ -134,8 +174,23 @@ phosh_background_cache_fetch_async (PhoshBackgroundCache *self,
+     g_debug ("Background cache hit for %s", g_file_peek_path (file));
+     g_task_return_pointer (task, g_object_ref (image), g_object_unref);
+   } else {
++    GPtrArray *waiting = g_hash_table_lookup (self->loading, file);
++
++    /* The background and the lock screen ask for the same picture as
++     * phosh starts, before either load is done: each loaded its own, and a
++     * 4096x4096 wallpaper was in memory twice, 64 MB each. The second
++     * waits for the first instead. */
++    if (waiting) {
++      g_debug ("Background %s already loading", g_file_peek_path (file));
++      g_ptr_array_add (waiting, g_steal_pointer (&task));
++      return;
++    }
+     g_debug ("Background cache miss for %s", g_file_peek_path (file));
+-    phosh_background_image_new (file, cancel, on_background_image_loaded, g_steal_pointer (&task));
++    waiting = g_ptr_array_new_with_free_func (g_object_unref);
++    g_ptr_array_add (waiting, g_steal_pointer (&task));
++    g_hash_table_insert (self->loading, g_object_ref (file), waiting);
++    /* one load for every fetch of the file, so none of them cancels it */
++    phosh_background_image_new (file, NULL, on_background_image_loaded, g_object_ref (file));
+   }
+ }
+ 
+diff --git a/src/background-image.c b/src/background-image.c
+index bec2e064..a19e5390 100644
+--- a/src/background-image.c
++++ b/src/background-image.c
+@@ -15,6 +15,8 @@
+ #include <gtk/gtk.h>
+ #include <gio/gio.h>
+ 
++#include <math.h>
++
+ /**
+  * PhoshBackgroundImage:
+  *
+@@ -241,3 +243,47 @@ phosh_background_image_get_file (PhoshBackgroundImage *self)
+ 
+   return self->file;
+ }
++
++
++/**
++ * phosh_background_image_shrink_to:
++ * @self: The background image
++ * @width: The width of the largest output, in pixels
++ * @height: Its height
++ *
++ * Drops the pixels no output shows. Every style draws the image scaled to
++ * an output - to cover it or to fit in it - so beyond covering the largest
++ * output, turned either way, the decoded image is only memory: GNOME's
++ * 4096x4096 wallpapers kept 67 MB in phosh for as long as it ran, for
++ * outputs of 2784x1800 at the most.
++ */
++void
++phosh_background_image_shrink_to (PhoshBackgroundImage *self, int width, int height)
++{
++  g_autoptr (GdkPixbuf) scaled = NULL;
++  int w, h;
++  double f;
++
++  g_return_if_fail (PHOSH_IS_BACKGROUND_IMAGE (self));
++
++  if (self->pixbuf == NULL || width <= 0 || height <= 0)
++    return;
++
++  w = gdk_pixbuf_get_width (self->pixbuf);
++  h = gdk_pixbuf_get_height (self->pixbuf);
++  f = MAX (MAX ((double) width / w, (double) height / h),
++           MAX ((double) height / w, (double) width / h));
++  if (f >= 1.0)
++    return;
++
++  scaled = gdk_pixbuf_scale_simple (self->pixbuf,
++                                    MAX (1, (int) ceil (w * f)),
++                                    MAX (1, (int) ceil (h * f)),
++                                    GDK_INTERP_BILINEAR);
++  if (scaled == NULL)
++    return;
++
++  g_debug ("Background %dx%d kept as %dx%d", w, h,
++           gdk_pixbuf_get_width (scaled), gdk_pixbuf_get_height (scaled));
++  g_set_object (&self->pixbuf, scaled);
++}
+diff --git a/src/background-image.h b/src/background-image.h
+index 791acb7b..5b1b1d55 100644
+--- a/src/background-image.h
++++ b/src/background-image.h
+@@ -26,6 +26,9 @@ void                      phosh_background_image_new                    (GFile
+ PhoshBackgroundImage     *phosh_background_image_new_finish             (GAsyncResult          *res,
+                                                                          GError               **error);
+ GdkPixbuf                *phosh_background_image_get_pixbuf             (PhoshBackgroundImage *self);
++void                      phosh_background_image_shrink_to              (PhoshBackgroundImage *self,
++                                                                         int                   width,
++                                                                         int                   height);
+ GFile                    *phosh_background_image_get_file               (PhoshBackgroundImage *self);
+ 
+ 
+-- 
+2.43.0
+

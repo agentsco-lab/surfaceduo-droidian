@@ -1,0 +1,22 @@
+diff --git a/src/shell.c b/src/shell.c
+index b2404493..f372c5fa 100644
+--- a/src/shell.c
++++ b/src/shell.c
+@@ -729,6 +729,17 @@ panels_create (PhoshShell *self)
+                                                    phosh_wayland_get_zphoc_layer_shell_effects_v1 (wl),
+                                                    monitor));
+   g_object_bind_property (self, "overview-visible", priv->home, "visible", G_BINDING_SYNC_CREATE);
++  /* On a display with a seam the home surface is never seen: it has no home
++   * bar there (home.c) and the shell's dock holds the applications. Shown
++   * anyway, it redrew the whole of itself - 2784x5952 on this phone - two
++   * or three times as the last window closed, ~20 ms of upload each, and
++   * the window's own fade lost 3-4 frames to it (#147). */
++  {
++    GdkRectangle seam;
++
++    if (phosh_layout_manager_get_seam (priv->layout_manager, &seam))
++      g_object_set (self, "overview-visible", FALSE, NULL);
++  }
+ 
+   g_signal_connect_swapped (priv->top_panel,
+                             "activated",

@@ -1,0 +1,211 @@
+From fe90922d1fcad56dc7bc919ae8559a901b578303 Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+Date: Sat, 26 Sep 2026 14:17:15 +0300
+Subject: [PATCH] osk: the power button's keyboard types into the window's
+ field; a new window's own focus leaves it down
+
+On a two-panel display a window that has only just appeared and puts its
+focus in a field by itself (Firefox's address bar as it starts) does not
+bring the keyboard up over it. Shown by a request instead - phosh's power
+button (phosh-patches-0.55/0020) - with no field taking text, the keyboard
+puts the focus in the active window's field with that window's shortcut for
+it: Firefox's address bar sits under the dock's gesture band, where no tap
+reaches it.
+---
+ src/phosh-osk-stevia.c      | 76 ++++++++++++++++++++++++++++++++++++-
+ src/pos-activation-filter.c | 19 ++++++++++
+ src/pos-activation-filter.h |  1 +
+ 3 files changed, 94 insertions(+), 2 deletions(-)
+
+diff --git a/src/phosh-osk-stevia.c b/src/phosh-osk-stevia.c
+index 5465ffe..d5abcf8 100644
+--- a/src/phosh-osk-stevia.c
++++ b/src/phosh-osk-stevia.c
+@@ -13,6 +13,10 @@
+ #include "pos-config.h"
+ #include "pos.h"
+ 
++/* On a display made of two panels (see panel_width_for_seam) */
++#define SFDUO_KEY_ROW 60           /* px, a row of keys */
++#define SFDUO_NEW_WINDOW_MS 2000   /* a window this young focusing a field by itself */
++
+ #include "dh-dconf-migration.h"
+ 
+ #include <gio/gio.h>
+@@ -62,6 +66,9 @@ typedef struct _PosApp {
+   int                  panel;
+   int                  gap;
+   GDBusProxy          *dock;
++  /* to put the focus in the active window's field when shown by a request */
++  PosInputMethod      *im;
++  PosVkDriver         *vk_driver;
+ } PosApp;
+ 
+ G_DEFINE_TYPE (PosApp, pos_app, G_TYPE_OBJECT)
+@@ -222,6 +229,20 @@ set_surface_prop_surface_visible (GBinding     *binding,
+   g_debug ("active: %d, enabled: %d", visible, enabled);
+   if (enabled == FALSE)
+     visible = FALSE;
++
++  /* On a folding display a window that has only just appeared and puts
++   * its own focus in a field - Firefox's address bar, as it starts - does
++   * not bring the keyboard up over it: the hand did not ask for it, and on
++   * this display the power button brings it whenever it is wanted
++   * (phosh-patches-0.55/0020). A field touched after that does. */
++  if (visible && self->panel && self->activation_filter) {
++    gint64 age = pos_activation_filter_get_active_age (self->activation_filter);
++
++    if (age >= 0 && age < SFDUO_NEW_WINDOW_MS) {
++      g_debug ("A field in a window %" G_GINT64_FORMAT " ms old: keyboard left down", age);
++      visible = FALSE;
++    }
++  }
+   if (visible)
+     follow_active_window (self);
+ 
+@@ -279,7 +300,6 @@ dispose_input_surface (PosApp *self)
+  *
+  * Returns the panel's width in logical pixels, or 0 for an ordinary display.
+  */
+-#define SFDUO_KEY_ROW 60
+ 
+ static int
+ panel_width_for_seam (void)
+@@ -367,14 +387,62 @@ follow_active_window (PosApp *self)
+                                      g_strcmp0 (side, "left") == 0 ? 0 : self->panel + self->gap);
+ }
+ 
++/*
++ * Shown by a request - phosh's power button on a folding display - with no
++ * field taking the text, the keyboard puts the focus in the active window's
++ * field itself, with the shortcut that window has for it: typing is what
++ * the hand asked the keyboard for. Firefox keeps its address bar at the
++ * bottom of the panel, under the dock's gesture band, where no tap reaches
++ * it; the button is the way to it. Other windows just get the keyboard.
++ */
++static const struct {
++  const char *app_id;
++  guint       keyval;
++  GdkModifierType modifiers;
++} field_shortcuts[] = {
++  { "firefox",            GDK_KEY_l, GDK_CONTROL_MASK },   /* the address bar */
++  { "org.mozilla.firefox", GDK_KEY_l, GDK_CONTROL_MASK },
++  { "org.gnome.Epiphany", GDK_KEY_l, GDK_CONTROL_MASK },
++  { "org.gnome.Nautilus", GDK_KEY_l, GDK_CONTROL_MASK },   /* the location */
++};
++
++
++static gboolean
++focus_active_field (gpointer data)
++{
++  PosApp *self = data;
++  const char *app_id;
++
++  if (!self->input_surface || !pos_input_surface_get_visible (self->input_surface))
++    return G_SOURCE_REMOVE;
++  if (!self->im || pos_input_method_get_active (self->im) || !self->vk_driver)
++    return G_SOURCE_REMOVE;
++
++  app_id = self->activation_filter ?
++    pos_activation_filter_get_active_app_id (self->activation_filter) : NULL;
++  for (guint i = 0; app_id && i < G_N_ELEMENTS (field_shortcuts); i++) {
++    if (g_strcmp0 (app_id, field_shortcuts[i].app_id) == 0) {
++      g_debug ("Shown with no field: the focus to %s's field", app_id);
++      pos_vk_driver_key_press_gdk (self->vk_driver, field_shortcuts[i].keyval,
++                                   field_shortcuts[i].modifiers);
++      break;
++    }
++  }
++  return G_SOURCE_REMOVE;
++}
++
++
+ static void
+ on_surface_visible (PosApp *self)
+ {
+   /* shown by a request (sm.puri.OSK0 - phosh's power button on a folding
+    * display) rather than by a field: it goes to the active window's panel
+    * all the same */
+-  if (self->input_surface && pos_input_surface_get_visible (self->input_surface))
++  if (self->input_surface && pos_input_surface_get_visible (self->input_surface)) {
+     follow_active_window (self);
++    if (self->im && !pos_input_method_get_active (self->im))
++      g_timeout_add (100, focus_active_field, self);
++  }
+ }
+ 
+ 
+@@ -479,6 +547,8 @@ create_input_surface (PosApp *self)
+                             "min-height",
+                             G_BINDING_SYNC_CREATE);
+   }
++  g_set_object (&self->im, im);
++  g_set_object (&self->vk_driver, vk_driver);
+   if (panel) {
+     pos_input_surface_set_margin_left (self->input_surface, panel + self->gap);
+     g_signal_connect_object (self->input_surface, "notify::surface-visible",
+@@ -628,6 +698,8 @@ pos_input_surface_finalize (GObject *object)
+   g_clear_object (&self->osk_dbus);
+   g_clear_object (&self->activation_filter);
+   g_clear_object (&self->dock);
++  g_clear_object (&self->im);
++  g_clear_object (&self->vk_driver);
+   g_clear_object (&self->hw_tracker);
+ 
+   g_clear_object (&self->session_proxy);
+diff --git a/src/pos-activation-filter.c b/src/pos-activation-filter.c
+index fdd511c..539515e 100644
+--- a/src/pos-activation-filter.c
++++ b/src/pos-activation-filter.c
+@@ -60,6 +60,7 @@ struct _PosToplevel {
+   char                                   *title;
+   gboolean                                activated;
+   gboolean                                configured;
++  gint64                                  born;   /* monotonic, when it appeared */
+ 
+   PosActivationFilter                    *filter; /* (unowned) */
+ };
+@@ -215,6 +216,7 @@ toplevel_new_from_handle (PosActivationFilter *self, struct zwlr_foreign_topleve
+ 
+   toplevel->filter = self;
+   toplevel->handle = handle;
++  toplevel->born = g_get_monotonic_time ();
+ 
+   zwlr_foreign_toplevel_handle_v1_add_listener (toplevel->handle, &zwlr_foreign_toplevel_handle_listener, toplevel);
+ 
+@@ -360,6 +362,23 @@ pos_activation_filter_class_init (PosActivationFilterClass *klass)
+ }
+ 
+ 
++/**
++ * pos_activation_filter_get_active_age:
++ * @self: The activation filter
++ *
++ * Returns: how long ago the active window appeared, in ms, or -1 if there is none
++ */
++gint64
++pos_activation_filter_get_active_age (PosActivationFilter *self)
++{
++  g_return_val_if_fail (POS_IS_ACTIVATION_FILTER (self), -1);
++
++  if (!self->active)
++    return -1;
++  return (g_get_monotonic_time () - self->active->born) / 1000;
++}
++
++
+ const char *
+ pos_activation_filter_get_active_app_id (PosActivationFilter *self)
+ {
+diff --git a/src/pos-activation-filter.h b/src/pos-activation-filter.h
+index 2991b6c..7c5a80b 100644
+--- a/src/pos-activation-filter.h
++++ b/src/pos-activation-filter.h
+@@ -15,3 +15,4 @@ G_DECLARE_FINAL_TYPE (PosActivationFilter, pos_activation_filter, POS, ACTIVATIO
+ PosActivationFilter *pos_activation_filter_new                    (gpointer foreign_toplevel_management);
+ gboolean             pos_activation_filter_allow_active           (PosActivationFilter *self);
+ const char          *pos_activation_filter_get_active_app_id      (PosActivationFilter *self);
++gint64               pos_activation_filter_get_active_age         (PosActivationFilter *self);
+-- 
+2.43.0
+

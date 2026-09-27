@@ -1,0 +1,24 @@
+diff --git a/src/overview.c b/src/overview.c
+index 8fae71c8..ab30bccb 100644
+--- a/src/overview.c
++++ b/src/overview.c
+@@ -448,6 +448,19 @@ request_thumbnail (PhoshActivity *activity, PhoshToplevel *toplevel)
+   int scale;
+   g_return_if_fail (PHOSH_IS_ACTIVITY (activity));
+   g_return_if_fail (PHOSH_IS_TOPLEVEL (toplevel));
++
++  /*
++   * A thumbnail nobody can see is a window read back from the GPU for
++   * nothing. The overview asks for one whenever a window changes, and on a
++   * display with a seam it is never shown (the home surface is hidden,
++   * patch 0016): 53 thumbnails in 20 launches, in the middle of each. One
++   * of them, now and then, was a buffer phoc would not take, and phoc
++   * disconnected the shell (#196). An activity that can be seen again
++   * asks again - phosh_overview_refresh, or the window's next change.
++   */
++  if (!gtk_widget_is_visible (GTK_WIDGET (activity)))
++    return;
++
+   scale = gtk_widget_get_scale_factor (GTK_WIDGET (activity));
+   phosh_activity_get_thumbnail_allocation (activity, &allocation);
+   thumbnail = phosh_toplevel_thumbnail_new_from_toplevel (toplevel, allocation.width * scale,
