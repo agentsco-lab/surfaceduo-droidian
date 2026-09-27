@@ -1,0 +1,184 @@
+From f3972b8f2967115db117597f7802ce07f7845d9a Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 18:50:56 +0300
+Subject: [PATCH] view: a window scaled to fit a panel reaches past its edges
+
+A window wider than a panel - GNOME Contacts' first window wants 800 of
+the panel's 675 - is scaled to fit it (view_update_scale). Made exactly
+the panel's size, one of its edges came out short: its box was divided by
+the scale and truncated (1066 of 1066.67 at 0.84375, 899.4 tall), and its
+position is kept in its own units, a step of 1/scale layout pixels, and
+drawn rounded. The wallpaper showed through a line under it on the left
+panel and beside it on the right.
+
+The panel's box is now worked out in layout pixels first. A scaled window
+is given it and FIT_PAD (2) more on every side, divided with its start
+rounded down and its end up, its scale taken from that width - not from a
+box already divided by the scale being worked out - and it is placed from
+the box's start rather than centred. Past the panel it lies under the
+hinge or off the screen. Windows at scale 1 are placed as before.
+
+Checked on the Duo: Contacts' first window on either panel, every edge
+covered; Calculator still 675x900.
+---
+ src/view.c | 97 +++++++++++++++++++++++++++++++++++++++---------------
+ 1 file changed, 71 insertions(+), 26 deletions(-)
+
+diff --git a/src/view.c b/src/view.c
+index 4dee97d..54bd6a1 100644
+--- a/src/view.c
++++ b/src/view.c
+@@ -5,6 +5,7 @@
+ #ifndef _POSIX_C_SOURCE
+ #define _POSIX_C_SOURCE 200809L
+ #endif
++#include <math.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <wlr/types/wlr_subcompositor.h>
+@@ -770,18 +771,27 @@ view_arrange_maximized (PhocView *self, PhocOutput *output)
+  *
+  * Returns: %TRUE if the box can be maximized, otherwise %FALSE.
+  */
+-gboolean
+-phoc_view_get_tiled_box (PhocView               *self,
+-                         PhocViewTileDirection   dir,
+-                         PhocOutput             *output,
+-                         struct wlr_box         *box)
++/* How far a window scaled to fit a panel reaches past each of its edges, in
++ * layout pixels. Its position is kept in its own units, a step of 1/scale
++ * layout pixels (1.19 at 0.84), and drawn rounded to whole ones: made just
++ * the panel's size, one edge or another came out short of it, and the
++ * wallpaper showed through a line there. Past the edges it lies under the
++ * hinge or off the screen. */
++#define FIT_PAD 2
++
++/*
++ * The tile's box in layout pixels, before the view's own scale.
++ */
++static gboolean
++get_panel_box (PhocView               *self,
++               PhocViewTileDirection   dir,
++               PhocOutput             *output,
++               struct wlr_box         *box)
+ {
+   PhocDesktop *desktop = phoc_server_get_desktop (phoc_server_get_default ());
+-  PhocViewPrivate *priv;
+ 
+   g_assert (box);
+   g_assert (PHOC_IS_VIEW (self));
+-  priv = phoc_view_get_instance_private (self);
+ 
+   if (phoc_view_is_fullscreen (self))
+     return FALSE;
+@@ -796,7 +806,7 @@ phoc_view_get_tiled_box (PhocView               *self,
+   wlr_output_layout_get_box (desktop->layout, output->wlr_output, &output_box);
+   struct wlr_box usable_area = output->usable_area;
+   PhocOutputConfig *oc;
+-  int x, width, seam = 0;
++  int x, width, height, seam = 0;
+ 
+   usable_area.x += output_box.x;
+   usable_area.y += output_box.y;
+@@ -829,13 +839,42 @@ phoc_view_get_tiled_box (PhocView               *self,
+     g_error ("Invalid tiling direction %d", dir);
+   }
+ 
+-  box->x = x / priv->scale;
+-  box->y = usable_area.y / priv->scale;
+-  box->width = width / priv->scale;
+   /* what a surface standing on this panel only reserves at its bottom (the
+    * keyboard, see update_panel_bottom in layer-shell.c) */
+-  box->height = (usable_area.height -
+-                 (seam ? output->panel_bottom[dir == PHOC_VIEW_TILE_LEFT ? 0 : 1] : 0)) / priv->scale;
++  height = usable_area.height -
++    (seam ? output->panel_bottom[dir == PHOC_VIEW_TILE_LEFT ? 0 : 1] : 0);
++
++  box->x = x;
++  box->y = usable_area.y;
++  box->width = width;
++  box->height = height;
++
++  return TRUE;
++}
++
++gboolean
++phoc_view_get_tiled_box (PhocView               *self,
++                         PhocViewTileDirection   dir,
++                         PhocOutput             *output,
++                         struct wlr_box         *box)
++{
++  PhocViewPrivate *priv = phoc_view_get_instance_private (self);
++  struct wlr_box panel;
++  double s = priv->scale;
++  int pad = s < 1.0 ? FIT_PAD : 0;
++
++  if (!get_panel_box (self, dir, output, &panel))
++    return FALSE;
++
++  /* In the view's own units. A window scaled to fit (view_update_scale) is
++   * given the panel and FIT_PAD more on every side, its start rounded down
++   * and its end up: each divided and truncated, a window 800 wide at
++   * 0.84375 was asked for 1066 of the panel's 1066.67 and came out 899.4
++   * tall - the wallpaper showed through a line under it. */
++  box->x = floor ((panel.x - pad) / s);
++  box->y = floor ((panel.y - pad) / s);
++  box->width = ceil ((panel.x + panel.width + pad) / s) - box->x;
++  box->height = ceil ((panel.y + panel.height + pad) / s) - box->y;
+ 
+   return TRUE;
+ }
+@@ -1319,18 +1358,22 @@ view_place_fitted (PhocView *self, const struct wlr_box *box)
+     return FALSE;
+ 
+   phoc_view_get_geometry (self, &geom);
+-  x = box->x * s + (box->width * s - geom.width * s) / 2.0 - geom.x * s;
+-  /* Its scale comes from its width; its height is asked for, to fill the
+-   * box: a box made shorter - the keyboard up on this panel - lifts the
+-   * window's bottom over the keyboard at the same scale, rather than
+-   * centring the window with its bottom still under it. */
++  /* From the box's start, rounded down: the box reaches FIT_PAD past the
++   * panel on each side and the window, scaled by its width, is as wide as
++   * the box, so every edge of the panel stays covered. Centred, a fraction
++   * of the view's step lost to rounding showed as a line at one edge. */
++  x = floor (box->x - geom.x);
++  /* Its height is asked for, to fill the box: a box made shorter - the
++   * keyboard up on this panel - lifts the window's bottom over the keyboard
++   * at the same scale, rather than centring the window with its bottom
++   * still under it. */
+   if (geom.height != box->height && !phoc_view_is_fullscreen (self)) {
+-    y = box->y * s - geom.y * s;
+-    phoc_view_move_resize (self, x / s, y / s, geom.width, box->height);
++    y = floor (box->y - geom.y);
++    phoc_view_move_resize (self, x, y, geom.width, box->height);
+     return TRUE;
+   }
+-  y = box->y * s + (box->height * s - geom.height * s) / 2.0 - geom.y * s;
+-  phoc_view_move (self, x / s, y / s);
++  y = floor (box->y + (box->height - geom.height) / 2.0 - geom.y);
++  phoc_view_move (self, x, y);
+   return TRUE;
+ }
+ 
+@@ -1386,12 +1429,14 @@ view_update_scale (PhocView *view)
+    * fit, as scale-to-fit does for a window larger than the output. */
+   gboolean fit_tile = (phoc_view_is_tiled (view) ||
+                        (phoc_view_is_maximized (view) && view_seam_side (view, output, &side))) &&
+-    phoc_view_get_tiled_box (view, side, output, &tile);
++    get_panel_box (view, side, output, &tile);
+ 
+   if (fit_tile) {
+-    /* the box comes divided by the view's scale; the panel is what it is */
+-    area.width = tile.width * priv->scale;
+-    area.height = tile.height * priv->scale;
++    /* the panel in layout pixels, and FIT_PAD past each side of it (see
++     * phoc_view_get_tiled_box); taken from the panel, not from a box
++     * divided by the scale being worked out */
++    area.width = tile.width + 2 * FIT_PAD;
++    area.height = tile.height + 2 * FIT_PAD;
+   }
+ 
+   if (fit_tile || priv->scale_to_fit || phoc_desktop_get_scale_to_fit (desktop)) {
+-- 
+2.43.0
+
