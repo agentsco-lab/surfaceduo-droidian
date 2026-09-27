@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""sfduo-boost: the big cores for an app that is starting, for a moment.
+"""sfduo-boost: the whole SoC for an app that is starting, for a moment.
 
 The scheduler here (WALT, Android's settings from init.qcom.post_boot.sh)
 moves a task to the big cores only once it has kept a little core busy
@@ -7,40 +7,129 @@ above 95 %, and an app starting from nothing is done before that: a launch
 ran mostly on the Cortex-A55s, about 1.7 GHz at 1.1 instructions a cycle.
 With sched_boost=1 a new app's work goes to the big cores at once - on
 Droidian 102, 2026-09-26: Calculator 1050 -> 710 ms, Weather 1080 -> 700 ms,
-a new window of a running app 130 -> 60 ms. Held all the time, it would put
-every background task on the big cores too, so it is asked for per launch.
+a new window of a running app 130 -> 60 ms.
+
+Stock Android on this phone does more than that. Its perf HAL's launch
+boost (perfboostsconfig.xml, 0x1081 type 1, measured on 2026-09-26 against
+the phone's own 12L) holds for 2 s: sched_boost 1, every cluster's minimum
+frequency at its maximum, the CPU-LLCC and LLCC-DDR bandwidth and the L3
+floors at their top, and /dev/cpu_dma_latency at 1 us so no core sinks
+into a deep idle state mid-launch (and a storage boost, left out here).
+perfetto showed the app running 67-81 % of its time on the big cores:
+Settings 368 ms, Calculator 340 ms to the first frame. This does the same
+with the same kernel's knobs; a knob this kernel does not have is skipped.
+
+Measured on Droidian 102, 2026-09-27, 10 launches each, against sched_boost
+alone for the same 1.5 s: Settings 831 -> 704 ms, Calculator 723 -> 573,
+Contacts 693 -> 561, Camera 965 -> 832, Weather 741 -> 592, GNOME Web
+1289 -> 1202, Calendar 1908 -> 1572. Held 2 s, as Android holds it, it gave
+the same within 2 %: the dock asks for 1.5 s.
 
 The dock sends a datagram with a duration in milliseconds to the socket
-below when it starts or brings back an app; sched_boost is 1 until the
-latest of those runs out (at most MAX_MS), then back to what it was. Plain
-socket rather than D-Bus: nothing to configure, and the dock waits for
-nothing.
+below when it starts or brings back an app; the boost holds until the
+latest of those runs out (at most MAX_MS), then every value goes back to
+what it was. Plain socket rather than D-Bus: nothing to configure, and the
+dock waits for nothing.
 
     sfduo-boost          run (as root; sfduo-boost.service)
 """
 import os
 import select
 import socket
+import struct
 import sys
 import time
 
 SOCK = "/run/sfduo-boost.sock"
-KNOB = "/proc/sys/kernel/sched_boost"
 MAX_MS = 3000
+
+CPUFREQ = "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq"
+CLUSTERS = (0, 4, 7)                                  # the first cpu of each
+MIN_FREQ = "/sys/module/msm_performance/parameters/cpu_min_freq"
+BUSES = ("/sys/class/devfreq/soc:qcom,cpu-cpu-llcc-bw",
+         "/sys/class/devfreq/soc:qcom,cpu-llcc-ddr-bw") + \
+        tuple(f"/sys/class/devfreq/soc:qcom,cpu{c}-cpu-l3-lat" for c in CLUSTERS)
 
 
 def log(msg):
     print(f"sfduo-boost: {msg}", file=sys.stderr, flush=True)
 
 
-def read_knob():
-    with open(KNOB) as fp:
+def read(path):
+    with open(path) as fp:
         return fp.read().strip()
 
 
-def write_knob(value):
-    with open(KNOB, "w") as fp:
+def write(path, value):
+    with open(path, "w") as fp:
         fp.write(value)
+
+
+def top_of(bus):
+    """The highest floor a devfreq device takes: its top step, but no higher
+    than its max_freq at the moment - on 4.14 a min_freq above max_freq is
+    refused (EINVAL), and two of the buses sit capped below their top
+    (cpu-cpu-llcc-bw 14236 of 15258, cpu-llcc-ddr-bw 6881 of 7980)."""
+    cap = int(read(f"{bus}/max_freq"))
+    try:
+        steps = [int(v) for v in read(f"{bus}/available_frequencies").split()]
+        return str(min(max(steps), cap))
+    except (OSError, ValueError):
+        return str(cap)
+
+
+class Levers:
+    """What a launch gets, and what it all was before, to put back."""
+
+    def __init__(self):
+        self.plan = []                                   # (path, boosted value)
+        self.plan.append(("/proc/sys/kernel/sched_boost", "1"))
+        try:
+            tops = " ".join(f"{c}:{read(CPUFREQ % c)}" for c in CLUSTERS)
+            if os.path.exists(MIN_FREQ):
+                self.plan.append((MIN_FREQ, tops))
+        except OSError:
+            pass
+        for bus in BUSES:
+            if os.path.exists(f"{bus}/min_freq"):
+                self.plan.append((f"{bus}/min_freq", None))   # the top, read at each pull
+        self.saved = {}
+        self.latency = None
+        log("levers: " + ", ".join(p.split("/")[-2] if p.endswith("min_freq") else p.split("/")[-1]
+                                   for p, _ in self.plan))
+
+    def pull(self):
+        for path, value in self.plan:
+            try:
+                if value is None:                      # a bus: its cap may have moved
+                    value = top_of(os.path.dirname(path))
+                self.saved[path] = read(path)
+                write(path, value)
+            except OSError as err:
+                log(f"{path}: {err}")
+        try:
+            # a PM QoS request lasts as long as the file is open
+            self.latency = os.open("/dev/cpu_dma_latency", os.O_WRONLY)
+            os.write(self.latency, struct.pack("i", 1))
+        except OSError as err:
+            self.latency = None
+            log(f"cpu_dma_latency: {err}")
+
+    def release(self):
+        if self.latency is not None:
+            os.close(self.latency)
+            self.latency = None
+        for path, _ in reversed(self.plan):
+            if path not in self.saved:
+                continue
+            value = self.saved.pop(path)
+            if path == MIN_FREQ:
+                # read back as "cpu:freq" for every cpu; no floor is 0
+                value = " ".join(f"{c}:0" for c in CLUSTERS)
+            try:
+                write(path, value)
+            except OSError as err:
+                log(f"{path}: {err}")
 
 
 def main():
@@ -51,8 +140,8 @@ def main():
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
     sock.bind(SOCK)
     os.chmod(SOCK, 0o666)                 # any session program may ask; it is only a moment
+    levers = Levers()
     until = None                          # monotonic time the boost runs out
-    before = None                         # sched_boost as it was when this raised it
     log("listening on " + SOCK)
     try:
         while True:
@@ -67,17 +156,13 @@ def main():
                 if ms <= 0:
                     continue
                 if until is None:
-                    before = read_knob()
-                    if before != "1":
-                        write_knob("1")
+                    levers.pull()
                 until = max(until or 0.0, time.monotonic() + ms / 1000.0)
             elif until is not None and time.monotonic() >= until:
-                if before is not None and before != "1":
-                    write_knob(before)
-                until = before = None
+                levers.release()
+                until = None
     finally:
-        if until is not None and before is not None and before != "1":
-            write_knob(before)
+        levers.release()
         try:
             os.unlink(SOCK)
         except OSError:
