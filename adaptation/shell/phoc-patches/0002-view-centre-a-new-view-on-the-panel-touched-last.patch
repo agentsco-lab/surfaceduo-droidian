@@ -1,5 +1,5 @@
 From 65a592fd07cca159d4f77be5c7b262467afb8806 Mon Sep 17 00:00:00 2001
-From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Fri, 18 Sep 2026 18:14:59 +0300
 Subject: [PATCH] view: centre a new view on the panel touched last, on an
  output with a seam

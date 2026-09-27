@@ -1,5 +1,5 @@
 From 8d8733a22c95dd38775f1c5bf5470c20ec79b268 Mon Sep 17 00:00:00 2001
-From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Sun, 20 Sep 2026 18:08:43 +0300
 Subject: [PATCH] view-ghost: a ghost is the window, not the whole surface
 

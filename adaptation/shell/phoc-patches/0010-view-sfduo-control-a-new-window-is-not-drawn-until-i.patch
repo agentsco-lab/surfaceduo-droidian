@@ -1,5 +1,5 @@
 From 96e1354e1f601fe4c317c66b9d37a596dd7ec4b6 Mon Sep 17 00:00:00 2001
-From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Sun, 20 Sep 2026 13:54:35 +0300
 Subject: [PATCH] view, sfduo-control: a new window is not drawn until it is
  where it belongs

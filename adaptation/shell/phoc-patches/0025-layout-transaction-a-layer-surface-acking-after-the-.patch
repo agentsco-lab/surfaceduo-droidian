@@ -1,5 +1,5 @@
 From 1122e223da79dd4ae1dda98e98507ed2596430bf Mon Sep 17 00:00:00 2001
-From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 14:26:17 +0300
 Subject: [PATCH] layout-transaction: a layer surface acking after the timeout
  is not an error

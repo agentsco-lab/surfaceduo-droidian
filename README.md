@@ -114,9 +114,7 @@ fast. The closed phone's draw on 102 is read after the fix of #230 (it was
   stock Android and back + `SPEED.md`, the port against stock Android + `APPS.md`, what an
   application has to know about this screen (the seam, rotation, touch as
   WebKit delivers it, the cost of a frame, profiling with symbols) +
-  `PERF.md`, where a frame's time goes + `PROCESS.md`, how the work is
-  tracked: one issue per piece of work, written so it can be done from the
-  issue alone. Since 0.20 the issues and the board are kept private.
+  `PERF.md`, where a frame's time goes.
 - `tools/` - `flash-safely.sh` (gated flash pipeline: offline image
   validation, per-serial attempt limits, health baselines,
   brick-signature detection), vendored AOSP mkbootimg, stock-DTB

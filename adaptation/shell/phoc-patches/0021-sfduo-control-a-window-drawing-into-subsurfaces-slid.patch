@@ -1,5 +1,5 @@
 From 5e23547aaf7bd94d2d0920fa42bf6d42981b8ad7 Mon Sep 17 00:00:00 2001
-From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 14:15:12 +0300
 Subject: [PATCH] sfduo-control: a window drawing into subsurfaces slides
  itself to the other panel

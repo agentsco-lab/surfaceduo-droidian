@@ -6,7 +6,7 @@ linux-android-microsoft-surfaceduo (4.14.190+sfduo2) trixie; urgency=medium
     The release string gains "-perf" - the module ABI is not the one of the
     4.14-190 builds.
 
- -- Ivan Verbovoy <ivanverbovoy@gmail.com>  Fri, 18 Sep 2026 10:40:00 +0300
+ -- Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>  Fri, 18 Sep 2026 10:40:00 +0300
 
 linux-android-microsoft-surfaceduo (4.14.190+sfduo1) trixie; urgency=medium
 
@@ -14,4 +14,4 @@ linux-android-microsoft-surfaceduo (4.14.190+sfduo1) trixie; urgency=medium
     SM8150), based on the stock msm-4.14 tree, branch
     surfaceduo/11/2022.902.48, with Halium/Droidian config fragments.
 
- -- Ivan Verbovoy <ivanverbovoy@gmail.com>  Fri, 10 Jul 2026 21:00:00 +0300
+ -- Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>  Fri, 10 Jul 2026 21:00:00 +0300

@@ -1,5 +1,5 @@
 From 8830519c7f33338a5176c0b96321281fa012c564 Mon Sep 17 00:00:00 2001
-From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Thu, 24 Sep 2026 00:43:49 +0300
 Subject: [PATCH] sfduo-control: Restore brings a window back as it was, at its
  first frame

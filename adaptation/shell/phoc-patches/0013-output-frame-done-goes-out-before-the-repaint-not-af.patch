@@ -1,5 +1,5 @@
 From a0ec89fbd54d0fef6d79ce5daf3d4d8d997ed1b5 Mon Sep 17 00:00:00 2001
-From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Wed, 23 Sep 2026 15:57:06 +0300
 Subject: [PATCH] output: frame done goes out before the repaint, not after the
  swap

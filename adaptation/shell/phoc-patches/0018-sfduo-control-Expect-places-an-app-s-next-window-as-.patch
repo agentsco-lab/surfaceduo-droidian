@@ -1,5 +1,5 @@
 From 6d0436ce964bd7101629872ce3b750dcfeaf3a34 Mon Sep 17 00:00:00 2001
-From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Thu, 24 Sep 2026 17:53:19 +0300
 Subject: [PATCH 18/19] sfduo-control: Expect places an app's next window as it
  maps

@@ -1,5 +1,5 @@
 From 289aaa17220c4ef41dda09264e0c1990912f3359 Mon Sep 17 00:00:00 2001
-From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 02:51:36 +0300
 Subject: [PATCH] layer-shell: a keyboard on one panel reserves that panel's
  bottom

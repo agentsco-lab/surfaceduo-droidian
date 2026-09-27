@@ -1,5 +1,5 @@
 From e7d531f8136dc9f6512208b2296523f560372a90 Mon Sep 17 00:00:00 2001
-From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 14:15:22 +0300
 Subject: [PATCH] layer-shell: the folded bars' pixel on each panel is not
  taken from windows

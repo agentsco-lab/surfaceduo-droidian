@@ -1,5 +1,5 @@
 From 97f59bbc7e90a80f292ed08a207c09c0667c5a41 Mon Sep 17 00:00:00 2001
-From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 03:24:57 +0300
 Subject: [PATCH] osk: the slide runs on a timer of its own
 

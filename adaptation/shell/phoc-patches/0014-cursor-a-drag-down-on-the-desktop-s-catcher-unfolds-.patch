@@ -1,5 +1,5 @@
 From ec2c6976701152114f395944e94ab7f52e9cfe6d Mon Sep 17 00:00:00 2001
-From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Wed, 23 Sep 2026 19:30:16 +0300
 Subject: [PATCH] cursor: a drag down on the desktop's catcher unfolds the
  shade over it

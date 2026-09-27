@@ -1,5 +1,5 @@
 From 7cadd3ebd88416bc195f61d2d1dec4d200185ee8 Mon Sep 17 00:00:00 2001
-From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 02:51:45 +0300
 Subject: [PATCH] osk: on a two-panel display, the keyboard goes to the panel
  of the window typed into

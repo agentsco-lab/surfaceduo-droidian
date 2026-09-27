@@ -1106,10 +1106,10 @@ mkdir -p "$PKG/etc/systemd/user"
 ln -s /dev/null "$PKG/etc/systemd/user/fpd-unlockd.service"
 # A finger gives PAM no password, so the login keyring stayed locked after
 # every boot, asked for one, and crashed gnome-keyring when two programs
-# asked at once. The port keeps it with no password of its own (the owner's
-# choice): a user without one gets it made that way before gnome-keyring
-# starts; `sfduo-keyring-open` in a terminal takes the password off one
-# that has it.
+# asked at once. The port keeps it with no password of its own (the
+# fingerprint unlocks the phone): a user without one gets it made that way
+# before gnome-keyring starts; `sfduo-keyring-open` in a terminal takes the
+# password off one that has it.
 install -m755  "$SYSTEM/sfduo-keyring-open"         "$PKG/usr/local/bin/"
 install -Dm644 "$SYSTEM/sfduo-keyring-open.service" "$PKG/usr/lib/systemd/user/sfduo-keyring-open.service"
 mkdir -p "$PKG/etc/systemd/user/default.target.wants"
@@ -1143,7 +1143,7 @@ cat > "$PKG/DEBIAN/control" <<EOF
 Package: adaptation-droidian-surfaceduo
 Version: $VER
 Architecture: arm64
-Maintainer: Ivan Verbovoy <ivanverbovoy@gmail.com>
+Maintainer: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Section: misc
 Priority: optional
 Recommends: python3-gi, python3-gi-cairo, python3-cairo, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, wlrctl, wtype, dconf-cli, gir1.2-gtk-4.0, gir1.2-gtk4layershell-1.0, libgtk4-layer-shell0, gir1.2-adw-1, gir1.2-ecal-2.0, gir1.2-edataserver-1.2, python3-evdev, e2fsprogs

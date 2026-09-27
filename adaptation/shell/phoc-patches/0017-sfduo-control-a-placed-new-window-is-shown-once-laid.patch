@@ -1,5 +1,5 @@
 From f3b0bd309bb5964bc896653a3de5d0b7d442f26e Mon Sep 17 00:00:00 2001
-From: Ivan Verbovoy <ivanverbovoy@gmail.com>
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Thu, 24 Sep 2026 15:40:11 +0300
 Subject: [PATCH] sfduo-control: a placed new window is shown once laid out,
  without a fade
