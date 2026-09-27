@@ -1,8 +1,9 @@
 # Droidian on Microsoft Surface Duo 1
 
-> **0.20.0 is the last release in this repository.** Development continues
-> at [agentsco-lab/item](https://github.com/agentsco-lab/item); issues and new
-> work go there.
+> **0.20.0 is the last feature release in this repository.** Fixes for the
+> hardware and for speed will keep coming here, promptly, as long as they
+> work on Droidian as it ships. The two-panel shell and new work continue at
+> [agentsco-lab/item](https://github.com/agentsco-lab/item).
 
 **An independent Linux port for the Microsoft Surface Duo 1** - Debian
 arm64 (Droidian, Halium-based) running with both OLED panels and touch,
