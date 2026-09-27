@@ -91,6 +91,9 @@ class Target:
 
     def __init__(self, reps):
         self.reps = reps
+        # SFDUO_BENCH_NAME: a run's own label (the system, the release), so
+        # that runs on different systems on one day are kept apart
+        self.name = os.environ.get("SFDUO_BENCH_NAME", self.name)
         stamp = datetime.date.today().isoformat()
         os.makedirs(RESULTS, exist_ok=True)
         self.out = os.path.join(RESULTS, f"{stamp}-{self.name}.jsonl")
@@ -114,15 +117,22 @@ class Target:
 # exact process name before each launch - Calendar and Camera stay behind
 # when their window closes, and a launch then would be warm.
 LINUX_APPS = {
-    "settings": ("org.gnome.Settings", "org.gnome.Settings", "gnome-control-center", False),
+    # the port's Settings, which the dock's gear opens; GNOME Settings is its
+    # pages. Until 2026-09-25 this was GNOME Settings itself, alone - an
+    # empty page on this port: numbers from before are not comparable
+    "settings": ("org.sfduo.Settings", "org.sfduo.Settings", "sfduo-settings", False),
     "calculator": ("org.gnome.Calculator", "org.gnome.Calculator", "gnome-calculator", False),
     "clock": ("org.gnome.clocks", "org.gnome.clocks", "gnome-clocks", True),
     "contacts": ("org.gnome.Contacts", "org.gnome.Contacts", "gnome-contacts", False),
     "phone": ("org.gnome.Calls", "org.gnome.Calls", "gnome-calls", True),
     "messages": ("sm.puri.Chatty", "sm.puri.Chatty", "chatty", True),
     "calendar": ("org.gnome.Calendar", "org.gnome.Calendar", "gnome-calendar", False),
+    # the same with its process kept running (gnome-calendar --gapplication-service), #242
+    "calendar-resident": ("org.gnome.Calendar", "org.gnome.Calendar", "gnome-calendar", True),
     "weather": ("org.gnome.Weather", "org.gnome.Weather", "gnome-weather", False),
     "browser": ("firefox", "firefox", "firefox", False),
+    # GNOME Web, weighed against Firefox on 102
+    "web": ("org.gnome.Epiphany", "org.gnome.Epiphany", "epiphany", False),
     # its window is not named after its desktop file
     "camera": ("droidian-camera", "org.Droidian.droidian-camera", "droidian-camera", False),
 }
@@ -633,6 +643,11 @@ rm -f /tmp/sfduo-bench.data
                 self.check_unlocked()
                 self._reset([kind])
                 self._launch_now(desktop, "left")
+                # SFDUO_BENCH_AGE: how long the app has run before it is put
+                # away (a restore soon after a launch was ~3x slower)
+                age = float(os.environ.get("SFDUO_BENCH_AGE", "0"))
+                if age:
+                    time.sleep(age)
                 self.sh(f"{self._session()} wlrctl toplevel minimize app_id:{app}; sleep 2", check=False)
                 seen = self._episode(f"restore-{kind}-{rep}",
                                      f"echo '{desktop}.desktop left' > /run/user/32011/sfduo-launch; kill -USR2 $D")
@@ -807,8 +822,8 @@ class Android(Target):
         width, height = (int(v) for v in re.search(r"(\d+)x(\d+)",
                                                      self.sh("wm size")).groups()[-2:])
         x = width // 4                  # the middle of the left screen
-        launcher = self.sh("cmd package resolve-activity --brief -c android.intent.category.HOME "
-                           "android.intent.action.MAIN").splitlines()[-1].split("/")[0].strip()
+        launcher = self.sh("cmd package resolve-activity --brief -a android.intent.action.MAIN "
+                           "-c android.intent.category.HOME").splitlines()[-1].split("/")[0].strip()
         rows = []
         self.sh("input keyevent KEYCODE_HOME; sleep 1")
         for rep in range(self.reps):

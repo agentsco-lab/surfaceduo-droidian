@@ -60,7 +60,7 @@ The apps, by kind:
 
 | kind | port | Android (Duo 1 / Duo 2) |
 |---|---|---|
-| settings | GNOME Settings | Settings |
+| settings | the port's Settings (GNOME Settings until 2026-09-25) | Settings |
 | calculator | GNOME Calculator | to be listed from the device |
 | clock | GNOME Clocks | Clock |
 | contacts | GNOME Contacts | Contacts |

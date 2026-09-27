@@ -75,7 +75,12 @@ Opening an app, from the request to its first frame, on the same Surface Duo 1
 | Settings | 368 | 794 | 1166 |
 | Calculator | 340 | 687 | 1045 |
 | Contacts | 413 | 649 | 1022 |
-| An app already running (Clock) | 92 | 59 | 135 |
+| Camera | 308 | 935 | 1332 |
+| Browser | 507 (Edge) | 1289 (GNOME Web) | 2339 (Firefox) |
+| Calendar | 584 (Outlook) | 1747 | 2038 |
+| Clock, already running | 92 | 59 | 135 |
+| Phone, already running | 92 | 59 | 303 |
+| Messages, already running | 121 | 133 | 242 |
 | A minimized app back from the dock | - | 59 | 444-491 |
 
 A third faster than on 101; stock Android still opens apps about twice as
