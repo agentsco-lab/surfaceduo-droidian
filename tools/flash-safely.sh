@@ -215,9 +215,14 @@ for slot, cur_key, base_key in (("a", "RA", "retry_a"), ("b", "RB", "retry_b")):
     cur, base = num(os.environ[cur_key]), num(b.get(base_key, ""))
     if cur is not None and base is not None and cur < base:
         problems.append(f"slot-retry-count:{slot} dropped {base} -> {cur}")
-for slot, key in (("a", "UA"), ("b", "UB")):
-    if os.environ[key] == "yes":
-        problems.append(f"slot {slot} marked unbootable")
+# Slot a is the port's: marked unbootable is always a stop. Slot b holds no
+# system on this phone, and stock Android marks it unbootable (seen after
+# the round trip to Android, 2026-09-26); that is a stop only when it is
+# new since the baseline, not when the baseline recorded it.
+if os.environ["UA"] == "yes":
+    problems.append("slot a marked unbootable")
+if os.environ["UB"] == "yes" and b.get("unbootable_b") != "yes":
+    problems.append("slot b marked unbootable")
 if b.get("critical") == "true" and os.environ["CR"] == "false":
     problems.append("critical_unlocked flipped true -> false (BRICK SIGNATURE)")
 print(";".join(problems))
