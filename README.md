@@ -40,7 +40,7 @@ shell is **experimental and in development**.
 | ![the lock screen](docs/img/shell-lockscreen.png) | |
 | The lock screen keeps its bar, kept off the hinge by CSS alone; 55-60 fps on the unlock swipe at scale 2. | |
 
-## Status (2026-09-23)
+## Status (2026-09-27, 0.20.0 on Droidian 102)
 
 | Subsystem | Status | Notes |
 |---|---|---|
@@ -57,13 +57,30 @@ shell is **experimental and in development**.
 | Fingerprint | ✅ | droidian-fpd; enrol in the settings, unlock by finger via sfduo-fingerprint whenever the locked screen is lit |
 | Suspend | ✅ | dwc3-msm kernel patch + sleep hook + AllowSuspend override; wake = long power press; RTC-through-sleep pending |
 | Flashlight / vibration | ✅ | sysfs LEDs (video group via udev); da7280 (FF_CONSTANT only) |
-| Pen (stylus) | 🟡 | it inks, but it is not a stylus to applications. The digitizer sends graded pressure, both buttons and a tool type; libinput discards all of it, because the node has to be classified as a touchscreen or touch dies. Measurements and the fix: [docs/PEN.md](docs/PEN.md) |
+| Pen (stylus) | ✅ | a stylus to applications since 0.20: `sfduo-pen-split` splits the digitizer into the fingers' touchscreen and a pen with pressure, eraser and button, and a sheet to draw on comes in from the right edge (swipe left on the free right panel). Tested with a Metapen; [docs/PEN.md](docs/PEN.md) |
 | Brightness | ✅ | the phosh slider drives both panels (udev change-event sync); auto-brightness pending (ALS already works) |
 | Fold | ✅ | hall sensor (GPIO 121) → SW_LID bridge → logind. Since 0.13 a fold locks rather than suspends (suspend is off in the session; to have it back see [adaptation/system](adaptation/system/README.md)); since 0.17 it also turns the display off: closed on battery 33-55 mA against 126-184 mA with the panels left lit, and a 4-hour measurement closed on battery went from 97 % to 89 % (53-57 mA, about 2 % an hour) |
 | GPS | ✅ | vendor GNSS + geoclue hybris source, ~4 m fixes; needs the geoclue keepalive drop-in from the adaptation (see traps below) |
 | Modem (calls/SMS/LTE) | 🟡 | LTE data works (70-90 ms pings) once the adaptation puts the modem online and on LTE at boot - it comes up offline and on 3G otherwise, see [adaptation/system](adaptation/system/README.md). Incoming SMS arrive; sending SMS and calls not tested yet |
 | Video out (USB-C DP) | ❓ | the whole DisplayPort path sits in the stock device tree and probes cleanly; whether the lanes reach the connector has never been tested - see below |
-| Dual-screen aware UI | 🧪 | experimental, in development: stock phosh spans both panels as one; the adaptation adds a dock across both that tiles each app onto the panel it was launched from, CSS that keeps the shell's own furniture off the hinge, and patched phosh and phoc binaries (focus after the app grid closes; tiled windows stop at the hinge) - see [adaptation/shell](adaptation/shell/README.md). Since 0.15 the on-screen keyboard takes one panel (a patched phosh-osk-stub). Since 0.16 each half has its own shade (settings on the left, the open windows and notifications on the right), a lone window gets its panel's full height with the bar moved to the free one, the port's own Settings groups the pages that apply here, a swipe in from the outer edge is back, and windows close, minimize and cross between panels with a motion (patched phoc). Since 0.17 there is no status bar outside the lock screen (it burned into the OLED panels and took height from every window): the time, the date and the weather stand on the free panel, the right-hand shade carries the signal, Wi-Fi and battery, and a dot in the corner shows the microphone, the camera or the location in use; Settings' Surface Duo page switches the two-panel shell, the output scale and idle blanking; back is one arrow in the corner under the thumb, with no arrows or chevrons in the pages |
+| Dual-screen aware UI | 🧪 | experimental, in development: stock phosh spans both panels as one; the adaptation adds a dock across both that tiles each app onto the panel it was launched from, CSS that keeps the shell's own furniture off the hinge, and patched phosh and phoc binaries (focus after the app grid closes; tiled windows stop at the hinge) - see [adaptation/shell](adaptation/shell/README.md). Since 0.15 the on-screen keyboard takes one panel (a patched phosh-osk-stub). Since 0.16 each half has its own shade (settings on the left, the open windows and notifications on the right), a lone window gets its panel's full height with the bar moved to the free one, the port's own Settings groups the pages that apply here, a swipe in from the outer edge is back, and windows close, minimize and cross between panels with a motion (patched phoc). Since 0.17 there is no status bar outside the lock screen (it burned into the OLED panels and took height from every window): the time, the date and the weather stand on the free panel, the right-hand shade carries the signal, Wi-Fi and battery, and a dot in the corner shows the microphone, the camera or the location in use; Settings' Surface Duo page switches the two-panel shell, the output scale and idle blanking; back is one arrow in the corner under the thumb, with no arrows or chevrons in the pages. Since 0.20 a move to the other panel turns like a page about the hinge, and a minimized app comes back from the dock in ~60 ms |
+
+## Speed
+
+Opening an app, from the request to its first frame, on the same Surface Duo 1
+(median of 10, ms):
+
+| | stock Android 12L | 0.20 on Droidian 102 | 0.18 on Droidian 101 |
+|---|---|---|---|
+| Settings | 368 | 794 | 1166 |
+| Calculator | 340 | 687 | 1045 |
+| Contacts | 413 | 649 | 1022 |
+| An app already running (Clock) | 92 | 59 | 135 |
+| A minimized app back from the dock | - | 59 | 444-491 |
+
+A third faster than on 101; stock Android still opens apps about twice as
+fast. All the numbers, the Surface Duo 2 beside them, and how they are taken:
+[docs/SPEED.md](docs/SPEED.md).
 
 ## Repository layout
 
@@ -85,7 +102,8 @@ shell is **experimental and in development**.
   covers the mechanisms and the traps).
 - `sensorfw-hinge-patch/` - hinge-angle sensor support for sensorfw
   (its own README covers build + install).
-- `docs/` - port guide + **the safety protocol** + `APPS.md`, what an
+- `docs/` - port guide + **the safety protocol** + `STOCK-ANDROID.md`, to
+  stock Android and back + `SPEED.md`, the port against stock Android + `APPS.md`, what an
   application has to know about this screen (the seam, rotation, touch as
   WebKit delivers it, the cost of a frame, profiling with symbols) +
   `PERF.md`, where a frame's time goes + `PROCESS.md`, how the work is
