@@ -9,6 +9,7 @@ installing by hand.
 
 ```
 sfduo-slot-guard.service   /etc/systemd/system/          mark the boot good, pin slot A
+sfduo-slot-guard           /usr/local/sbin/              ...the script it runs, which checks it took
 sfduo-modem.service        /etc/systemd/system/          the modem online and on LTE, every boot
 sfduo-modem                /usr/local/sbin/              ...the script it runs
 50-sfduo-lid.conf          /etc/systemd/logind.conf.d/   closing the device locks it
@@ -33,7 +34,18 @@ there) and calls `android_bootctl mark-boot-successful` and
 to exist on this device, or `lxc-attach` silently eats the last argument and
 the call does nothing - the failure that caused the drift in the first place.
 
+The order of the two calls matters: `set-active-boot-slot` clears the
+slot's "successful" mark. The unit used to mark first and set active after,
+undoing its own mark at every boot (found 2026-09-27) - harmless in practice,
+since setting a slot active also gives it its tries back, but slot a never
+read as good, and `flash-safely.sh` saw a slot that had never booted
+successfully. `sfduo-slot-guard` sets the slot active first, marks the boot
+good after, reads the mark back (`is-slot-marked-successful 0`), and repeats
+both every 5 s for up to two minutes until it holds; if it never does, the
+unit fails and shows in `systemctl --failed`.
+
 ```
+install -m755 sfduo-slot-guard /usr/local/sbin/
 install -m644 sfduo-slot-guard.service /etc/systemd/system/
 systemctl enable sfduo-slot-guard.service
 ```

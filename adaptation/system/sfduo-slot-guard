@@ -1,0 +1,32 @@
+#!/bin/sh
+# sfduo-slot-guard: pin slot a and mark this boot good, and check that it took.
+#
+# The bootloader gives a slot 7 tries; a boot the system never marks good
+# spends one, and a slot out of tries is given up for the other one. The
+# boot HAL that does the marking lives in the Android container, reached
+# through android_bootctl (lxc-attach).
+#
+# The order matters: set-active-boot-slot clears the slot's "successful"
+# mark (checked 2026-09-27: marked, set active, unmarked). The unit used to
+# mark first and set active after, and so undid its own mark at every boot -
+# harmless in practice, since setting a slot active also gives it its 7
+# tries back, but slot a never read as good. Now: set active, then mark, and
+# read the mark back; repeated every 5 s for up to two minutes should the
+# container's HAL not answer yet, and failing that the unit fails, visibly,
+# instead of reporting success.
+BOOTCTL=/usr/sbin/android_bootctl
+TRIES=24                               # every 5 s: two minutes
+
+i=0
+while [ "$i" -lt "$TRIES" ]; do
+    "$BOOTCTL" set-active-boot-slot 0 >/dev/null 2>&1
+    "$BOOTCTL" mark-boot-successful >/dev/null 2>&1
+    if "$BOOTCTL" is-slot-marked-successful 0 >/dev/null 2>&1; then
+        echo "sfduo-slot-guard: slot a active and marked good (try $((i + 1)))"
+        exit 0
+    fi
+    i=$((i + 1))
+    sleep 5
+done
+echo "sfduo-slot-guard: slot a still not marked good after $TRIES tries" >&2
+exit 1
