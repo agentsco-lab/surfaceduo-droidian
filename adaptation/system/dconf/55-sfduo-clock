@@ -1,0 +1,11 @@
+# Surface Duo: the time as the phone's user reads it. A fresh Droidian 102
+# image came up on UTC with GNOME's defaults - a 12-hour clock and the
+# automatic time zone off - so the desktop clock read "10:04" at 22:04 UTC,
+# with no AM or PM to say which, three hours off in Kyiv (found 2026-09-26).
+# The automatic time zone follows the location (geoclue, 54-sfduo-location);
+# the 24-hour clock is what the port's own desktop clock is drawn for.
+# A default, not a lock: a user's own value wins.
+[org/gnome/desktop/interface]
+clock-format='24h'
+[org/gnome/desktop/datetime]
+automatic-timezone=true

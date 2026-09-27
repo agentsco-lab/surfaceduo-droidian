@@ -1,0 +1,14 @@
+[Unit]
+Description=Surface Duo modem — keep it on LTE when something sets it to 3G
+# See sfduo-modem: mobile-power-saver drops the preference to umts when the
+# modem reappears (a SIM swap) while Wi-Fi is up; sfduo-modem only fixes boot.
+After=ofono.service sfduo-modem.service
+Wants=ofono.service
+
+[Service]
+ExecStart=/usr/local/sbin/sfduo-modem watch
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

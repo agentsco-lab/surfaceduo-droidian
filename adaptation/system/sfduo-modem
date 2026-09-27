@@ -26,6 +26,31 @@ wait_for() {        # wait_for <seconds> <command...>
     return 1
 }
 
+# sfduo-modem watch (sfduo-modem-watch.service): keep it on LTE afterwards.
+# Droidian 102's mobile-power-saver sets the lowest technology it allows -
+# umts - whenever the modem (re)appears while Wi-Fi is up (a SIM swapped in,
+# the radio restarted), without looking at its own radio-power-saving, which
+# is off. Only a preference set that way is put back: with radio-power-saving
+# turned on the phone's user asked for it.
+if [ "$1" = watch ]; then
+    radio_saving() {
+        runuser -u droidian -- gsettings get org.adishatz.Mps radio-power-saving 2>/dev/null |
+            grep -qx true
+    }
+    dbus-monitor --system "type='signal',interface='org.ofono.RadioSettings',member='PropertyChanged'" 2>/dev/null |
+    while read -r line; do
+        case $line in
+            *'string "umts"'*|*'string "gsm"'*)
+                radio_saving && continue
+                sleep 2    # let the setter's own call return first
+                ofono org.ofono.RadioSettings SetProperty sv TechnologyPreference s lte &&
+                    echo "sfduo-modem: set back to lte"
+                ;;
+        esac
+    done
+    exit 1
+fi
+
 has_modem()    { ofono org.ofono.Modem GetProperties >/dev/null; }
 is_online()    { ofono org.ofono.Modem GetProperties | grep -q '"Online" b true'; }
 has_settings() { ofono org.ofono.RadioSettings GetProperties >/dev/null; }

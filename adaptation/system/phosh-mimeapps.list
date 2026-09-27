@@ -1,0 +1,13 @@
+# Surface Duo: GNOME Web is the browser (2026-09-25). Measured on 102 from
+# nothing to the first frame, five launches each: GNOME Web 1.28-1.61 s,
+# Firefox 2.10-2.57 s. GNOME Web draws into its one GTK4 surface, so moving it
+# to the other panel slides like any GTK app, and the keyboard comes and goes
+# as for the rest. Firefox stays installed, hidden from the grid (hidden.list).
+# Read before GNOME's /usr/share/applications/gnome-mimeapps.list, which puts
+# Firefox first; the session's desktop is Phosh:GNOME. A user's own choice in
+# ~/.config wins.
+[Default Applications]
+x-scheme-handler/http=org.gnome.Epiphany.desktop
+x-scheme-handler/https=org.gnome.Epiphany.desktop
+text/html=org.gnome.Epiphany.desktop
+application/xhtml+xml=org.gnome.Epiphany.desktop

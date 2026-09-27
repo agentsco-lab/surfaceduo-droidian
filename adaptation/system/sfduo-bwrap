@@ -1,0 +1,25 @@
+#!/bin/sh
+# sfduo-bwrap: installed as /usr/local/bin/bwrap, ahead of /usr/bin in PATH.
+#
+# On Droidian 102 gdk-pixbuf loads PNG and JPEG through glycin, which runs
+# each image decoder in a bubblewrap sandbox - two bwrap runs per process,
+# an availability test and then the loader. On this 4.14 kernel creating the
+# namespaces takes 0.2-0.9 s each, so the first image any GTK3 program loads
+# costs 1.3-1.8 s instead of about 0.1 (measured 2026-09-25). phosh waits for
+# it at every session start - about 1.4 s of the lock screen's delay - and
+# the dock and every GTK3 app pay it once too.
+#
+# glycin's test is answered here the way bwrap answers where the kernel
+# refuses a namespace, and glycin then decodes without a sandbox, in a plain
+# process of its own ("Glycin running without sandbox"), as image loaders did
+# everywhere until glycin. Every other bwrap run goes to the real one
+# unchanged; flatpak calls /usr/bin/bwrap by its full path and is not touched.
+# To give glycin its sandbox back, remove this file.
+
+case " $* " in
+    *" --seccomp "*" /usr/bin/true "*)
+        echo "bwrap: No permissions to create new namespace, likely because the kernel does not allow non-privileged user namespaces." >&2
+        exit 1
+        ;;
+esac
+exec /usr/bin/bwrap "$@"

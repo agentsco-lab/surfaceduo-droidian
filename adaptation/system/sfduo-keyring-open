@@ -1,0 +1,129 @@
+#!/usr/bin/python3
+"""sfduo-keyring-open: the login keyring without a password of its own.
+
+The phone is unlocked by a finger, and a finger gives PAM no password: the
+login keyring - Wi-Fi, accounts, the browser's passwords - stayed locked
+after every boot and asked for one in a window of its own. Two programs
+asking at once (GNOME Online Accounts and the calendar, at every session
+start) crashed gnome-keyring 48 on the second prompt, and the question came
+again. The port keeps the login keyring unencrypted instead, the choice
+made on 2026-09-26: the finger is enough. What is in it can be read by
+anyone who can read the phone's files.
+
+    sfduo-keyring-open          as the user: no keyring yet - make one with
+                                no password; one with a password - ask for
+                                it here and take it off
+    sfduo-keyring-open --check  say which it is, change nothing
+    sfduo-keyring-open --if-none
+                                make one with no password if there is none,
+                                ask nothing (sfduo-keyring-open.service,
+                                before gnome-keyring starts)
+
+Asked here, in a terminal, because gnome-keyring's own window for changing
+a keyring's password crashes it on Droidian 102.
+"""
+import getpass
+import os
+import sys
+
+from gi.repository import Gio, GLib
+
+KEYRINGS = os.path.join(GLib.get_user_data_dir(), "keyrings")
+LOGIN = os.path.join(KEYRINGS, "login.keyring")
+COLLECTION = "/org/freedesktop/secrets/collection/login"
+ENCRYPTED = b"GnomeKeyring\n\r\0\n"
+
+# gnome-keyring's textual format, what it writes for a keyring with no
+# password (gkm-secret-textual.c)
+PLAIN = """[keyring]
+display-name=Login
+ctime=0
+mtime=0
+lock-on-idle=false
+lock-after=false
+"""
+
+
+def state():
+    try:
+        with open(LOGIN, "rb") as fp:
+            head = fp.read(len(ENCRYPTED))
+    except FileNotFoundError:
+        return "none"
+    return "password" if head == ENCRYPTED else "open"
+
+
+def make_plain():
+    os.makedirs(KEYRINGS, mode=0o700, exist_ok=True)
+    tmp = LOGIN + ".new"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fp:
+        fp.write(PLAIN)
+        fp.flush()
+        os.fsync(fp.fileno())
+    os.rename(tmp, LOGIN)
+    default = os.path.join(KEYRINGS, "default")
+    if not os.path.exists(default):
+        with open(default, "w") as fp:
+            fp.write("login")
+
+
+def secret(session, value):
+    return (session, b"", value, "text/plain")
+
+
+def take_password_off(bus, password):
+    service = Gio.DBusProxy.new_sync(
+        bus, Gio.DBusProxyFlags.DO_NOT_LOAD_PROPERTIES, None,
+        "org.freedesktop.secrets", "/org/freedesktop/secrets",
+        "org.freedesktop.Secret.Service", None)
+    _, session = service.call_sync(
+        "OpenSession", GLib.Variant("(sv)", ("plain", GLib.Variant("s", ""))),
+        Gio.DBusCallFlags.NONE, -1, None).unpack()
+    bus.call_sync(
+        "org.freedesktop.secrets", "/org/freedesktop/secrets",
+        "org.gnome.keyring.InternalUnsupportedGuiltRiddenInterface",
+        "ChangeWithMasterPassword",
+        GLib.Variant("(o(oayays)(oayays))", (
+            COLLECTION,
+            secret(session, password.encode()),
+            secret(session, b""))),
+        None, Gio.DBusCallFlags.NONE, -1, None)
+
+
+def main():
+    now = state()
+    if "--check" in sys.argv[1:]:
+        print({"none": "no login keyring yet",
+               "open": "the login keyring has no password",
+               "password": "the login keyring has a password"}[now])
+        return 0
+    if "--if-none" in sys.argv[1:]:
+        if now == "none":
+            make_plain()
+        return 0
+    if os.geteuid() == 0:
+        print("run it as the user, not as root", file=sys.stderr)
+        return 1
+    if now == "open":
+        print("the login keyring has no password already")
+        return 0
+    if now == "none":
+        make_plain()
+        print("made a login keyring with no password")
+        return 0
+
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    password = getpass.getpass("the login keyring's password (the phone's PIN): ")
+    try:
+        take_password_off(bus, password)
+    except GLib.Error as err:
+        print(f"not changed: {err.message}", file=sys.stderr)
+        return 1
+    print("done: the login keyring has no password" if state() == "open" else
+          "gnome-keyring took it, but the file is still encrypted - check again in a moment")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

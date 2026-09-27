@@ -48,7 +48,7 @@ if [ "$1" = "--purge" ]; then
         apt-cache depends --installed "$meta" 2>/dev/null | sed -n 's/^ *Depends: //p' | grep -v "^<" \
             | xargs -r apt-mark manual >/dev/null
     done
-    apt-get purge -y epiphany-browser eog file-roller gnome-usage gnome-software || true
+    apt-get purge -y eog file-roller gnome-usage gnome-software || true
     apt-get autoremove -y --purge
 fi
 apt-get install -y telegram-desktop nodejs npm git ripgrep curl fastfetch htop cool-retro-term

@@ -1,0 +1,7 @@
+# Surface Duo: mobile-power-saver leaves the NPU's DDR vote alone.
+# With the screen off it writes each devfreq device's min_freq into its
+# max_freq. The NPU's min is 0, and 4.14 reads a max of 0 as "no limit":
+# bw_hwmon then votes 7980 MB/s to DDR for an NPU nothing uses, and the
+# closed phone draws ~150 mA instead of ~45. Left alone the vote stays 0.
+[org.adishatz.Mps]
+devfreq-blacklist=['soc:qcom,npu-npu-ddr-bw']

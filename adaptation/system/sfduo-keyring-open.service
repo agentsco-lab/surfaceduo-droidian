@@ -1,0 +1,11 @@
+[Unit]
+Description=Surface Duo: a login keyring with no password, made before gnome-keyring starts
+Documentation=file:///usr/local/bin/sfduo-keyring-open
+Before=gnome-keyring-daemon.service gnome-keyring-daemon.socket
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/sfduo-keyring-open --if-none
+
+[Install]
+WantedBy=default.target

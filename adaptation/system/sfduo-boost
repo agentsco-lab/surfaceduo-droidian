@@ -1,0 +1,88 @@
+#!/usr/bin/python3
+"""sfduo-boost: the big cores for an app that is starting, for a moment.
+
+The scheduler here (WALT, Android's settings from init.qcom.post_boot.sh)
+moves a task to the big cores only once it has kept a little core busy
+above 95 %, and an app starting from nothing is done before that: a launch
+ran mostly on the Cortex-A55s, about 1.7 GHz at 1.1 instructions a cycle.
+With sched_boost=1 a new app's work goes to the big cores at once - on
+Droidian 102, 2026-09-26: Calculator 1050 -> 710 ms, Weather 1080 -> 700 ms,
+a new window of a running app 130 -> 60 ms. Held all the time, it would put
+every background task on the big cores too, so it is asked for per launch.
+
+The dock sends a datagram with a duration in milliseconds to the socket
+below when it starts or brings back an app; sched_boost is 1 until the
+latest of those runs out (at most MAX_MS), then back to what it was. Plain
+socket rather than D-Bus: nothing to configure, and the dock waits for
+nothing.
+
+    sfduo-boost          run (as root; sfduo-boost.service)
+"""
+import os
+import select
+import socket
+import sys
+import time
+
+SOCK = "/run/sfduo-boost.sock"
+KNOB = "/proc/sys/kernel/sched_boost"
+MAX_MS = 3000
+
+
+def log(msg):
+    print(f"sfduo-boost: {msg}", file=sys.stderr, flush=True)
+
+
+def read_knob():
+    with open(KNOB) as fp:
+        return fp.read().strip()
+
+
+def write_knob(value):
+    with open(KNOB, "w") as fp:
+        fp.write(value)
+
+
+def main():
+    try:
+        os.unlink(SOCK)
+    except FileNotFoundError:
+        pass
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    sock.bind(SOCK)
+    os.chmod(SOCK, 0o666)                 # any session program may ask; it is only a moment
+    until = None                          # monotonic time the boost runs out
+    before = None                         # sched_boost as it was when this raised it
+    log("listening on " + SOCK)
+    try:
+        while True:
+            timeout = None if until is None else max(0.0, until - time.monotonic())
+            ready, _, _ = select.select([sock], [], [], timeout)
+            if ready:
+                data = sock.recv(64)
+                try:
+                    ms = min(MAX_MS, max(0, int(data.decode().strip() or "0")))
+                except ValueError:
+                    continue
+                if ms <= 0:
+                    continue
+                if until is None:
+                    before = read_knob()
+                    if before != "1":
+                        write_knob("1")
+                until = max(until or 0.0, time.monotonic() + ms / 1000.0)
+            elif until is not None and time.monotonic() >= until:
+                if before is not None and before != "1":
+                    write_knob(before)
+                until = before = None
+    finally:
+        if until is not None and before is not None and before != "1":
+            write_knob(before)
+        try:
+            os.unlink(SOCK)
+        except OSError:
+            pass
+
+
+if __name__ == "__main__":
+    main()

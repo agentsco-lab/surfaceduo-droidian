@@ -1,0 +1,10 @@
+[Unit]
+Description=Surface Duo - the big cores for a starting app, for a moment (sched_boost on the dock's request)
+
+[Service]
+ExecStart=/usr/local/sbin/sfduo-boost
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
