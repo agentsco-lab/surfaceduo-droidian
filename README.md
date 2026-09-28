@@ -1,9 +1,12 @@
 # Droidian on Microsoft Surface Duo 1
 
-> **0.20.0 is the last feature release in this repository.** Fixes for the
-> hardware and for speed will keep coming here, promptly, as long as they
-> work on Droidian as it ships. The two-panel shell and new work continue at
-> [agentsco-lab/item](https://github.com/agentsco-lab/item).
+> **This repository is the port: the hardware and the system.** Fixes for the
+> hardware and for speed come here, promptly, as long as they work on
+> Droidian as it ships. The two-panel shell is developed at
+> [agentsco-lab/item](https://github.com/agentsco-lab/item). From 0.21 the
+> port runs Droidian's own shell, with only the fixes the hinge's seam needs,
+> and the two-panel shell becomes a package from item to install on top;
+> 0.20.x still carries the shell as it was.
 
 **An independent Linux port for the Microsoft Surface Duo 1** - Debian
 arm64 (Droidian, Halium-based) running with both OLED panels and touch,
@@ -37,7 +40,7 @@ of 2. The two-panel shell is **experimental and in development**.
 | ![the lock screen](docs/img/shell-lockscreen.png) | |
 | The lock screen keeps its bar, kept off the hinge by CSS alone; 55-60 fps on the unlock swipe at scale 2. | |
 
-## Status (2026-09-27, 0.20.0 on Droidian 102)
+## Status (2026-09-28, 0.20.1 on Droidian 102)
 
 | Subsystem | Status | Notes |
 |---|---|---|
@@ -58,7 +61,7 @@ of 2. The two-panel shell is **experimental and in development**.
 | Brightness | ✅ | the phosh slider drives both panels (udev change-event sync); auto-brightness pending (ALS already works) |
 | Fold | ✅ | hall sensor (GPIO 121) → SW_LID bridge → logind. Since 0.13 a fold locks rather than suspends (suspend is off in the session; to have it back see [adaptation/system](adaptation/system/README.md)); since 0.17 it also turns the display off: closed on battery 33-55 mA against 126-184 mA with the panels left lit, and a 4-hour measurement closed on battery went from 97 % to 89 % (53-57 mA, about 2 % an hour) |
 | GPS | ✅ | vendor GNSS + geoclue hybris source, ~4 m fixes; needs the geoclue keepalive drop-in from the adaptation (see traps below) |
-| Modem (calls/SMS/LTE) | 🟡 | LTE data works (70-90 ms pings) once the adaptation puts the modem online and on LTE at boot - it comes up offline and on 3G otherwise, see [adaptation/system](adaptation/system/README.md). Incoming SMS arrive; sending SMS and calls not tested yet |
+| Modem (calls/SMS/LTE) | ✅ | Calls and SMS both ways, LTE data (70-90 ms pings). The adaptation puts the modem online and on LTE at boot - it comes up offline and on 3G otherwise - and keeps it there: since 0.20.1 also when Droidian's mobile-power-saver asks it for 5G, which the Duo 1 does not have (the modem sat on 3G and never slept). See [adaptation/system](adaptation/system/README.md) |
 | Video out (USB-C DP) | ❓ | the whole DisplayPort path sits in the stock device tree and probes cleanly; whether the lanes reach the connector has never been tested - see below |
 | Dual-screen aware UI | 🧪 | experimental, in development: stock phosh spans both panels as one; the adaptation adds a dock across both that tiles each app onto the panel it was launched from, CSS that keeps the shell's own furniture off the hinge, and patched phosh and phoc binaries (focus after the app grid closes; tiled windows stop at the hinge) - see [adaptation/shell](adaptation/shell/README.md). Since 0.15 the on-screen keyboard takes one panel (a patched phosh-osk-stub). Since 0.16 each half has its own shade (settings on the left, the open windows and notifications on the right), a lone window gets its panel's full height with the bar moved to the free one, the port's own Settings groups the pages that apply here, a swipe in from the outer edge is back, and windows close, minimize and cross between panels with a motion (patched phoc). Since 0.17 there is no status bar outside the lock screen (it burned into the OLED panels and took height from every window): the time, the date and the weather stand on the free panel, the right-hand shade carries the signal, Wi-Fi and battery, and a dot in the corner shows the microphone, the camera or the location in use; Settings' Surface Duo page switches the two-panel shell, the output scale and idle blanking; back is one arrow in the corner under the thumb, with no arrows or chevrons in the pages. Since 0.20 a move to the other panel turns like a page about the hinge, and a minimized app comes back from the dock in ~60 ms |
 
@@ -260,6 +263,18 @@ Android and from it to the port: [docs/STOCK-ANDROID.md](docs/STOCK-ANDROID.md).
   the process falls to software and dies), and WebKit's dmabuf renderer
   stays disabled as the session has it: with mesa it measured 3x worse,
   with hybris it is indistinguishable from shared memory.
+
+- **The serial console nobody reads**: the stock command line carries
+  `console=ttyMSM0,115200n8 earlycon=msm_geni_serial,...`, and the Duo has no
+  UART on the outside. Every kernel message still waited for it at 115200
+  baud: `msm_geni_serial_init` took 3.6 s replaying the boot log when the
+  console came up, and the rest of the boot was held up with it - the kernel
+  reached the initramfs at 9.7 s. Without the two arguments (in
+  `kernel-info.mk` since 0.20.1) it gets there at 1.6 s, and the lock screen
+  comes 22 s after the kernel starts instead of 36. dmesg and the journal keep
+  every message. Found with `initcall_debug`; note that the Duo's bootloader
+  ignores the boot header's extra command line field - arguments have to go in
+  the main one.
 
 ## Open question: video out over USB-C
 
