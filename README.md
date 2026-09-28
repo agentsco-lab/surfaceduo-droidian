@@ -25,14 +25,13 @@ hands-off: on 0.20.1 the lock screen comes 22 s after the kernel starts
 ## What it looks like
 
 Screenshots of the one output both panels share (2784x1800; the 84 px column
-the hinge hides is in the middle), taken on 0.17.0 at the port's output scale
-of 2 - the lock screen on 0.15.4, which it still looks like. The two-panel
-shell is **experimental and in development**.
+the hinge hides is in the middle), taken on 0.20.1 at the port's output scale
+of 2. The two-panel shell is **experimental and in development**.
 
 | | |
 |---|---|
 | ![the desktop: the dock in two halves and the clock](docs/img/shell-desktop.png) | ![Settings on one panel, the clock on the other](docs/img/shell-window.png) |
-| Nothing open: the dock in two halves at the panels' outer edges, under the thumbs, and the time, the date and the weather on the right panel. No status bar - since 0.17 there is none outside the lock screen. | The port's Settings on the panel it was opened on, at its Surface Duo page - the two-panel shell, the output scale, idle blanking. Back is the arrow in the corner under the thumb; the clock and the dock move to the free panel. |
+| Nothing open: the dock in two halves at the panels' outer edges, under the thumbs, and the time, the date and the weather on the right panel. No status bar - since 0.17 there is none outside the lock screen. | The port's Settings on the panel it was opened on: the pages that apply to this phone, grouped, with its own Surface Duo page (the two-panel shell, the output scale, idle blanking) at the end. Back is the arrow in the corner under the thumb; the clock and the dock move to the free panel. |
 | ![a window on each panel](docs/img/shell-two.png) | ![the right-hand shade](docs/img/shell-shade.png) |
 | A window on each panel, each at its panel's full height: with both panels taken the dock and the clock step aside. | The right-hand shade: the clock, the date, signal, Wi-Fi and battery, the open windows with the panel each is on, and the notifications. The left-hand one holds the settings. |
 | ![the lock screen](docs/img/shell-lockscreen.png) | |
