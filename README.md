@@ -18,11 +18,9 @@ July 2026.
 > boot cycle. See [docs/SAFETY.md](docs/SAFETY.md). If you skip it, you
 > accept the risk of a paperweight.
 
-A boot to a fully working system (both panels, touch, WiFi auto-connect,
-sshd over USB) takes about two minutes, hands-off - measured in September
-2026 at 95-135 s from reboot to an ssh login. With the kernel built without
-Microsoft's debugging (`kernel-packaging/droidian/surfaceduo-perf.config`,
-2026-09-18) it is about half that, 40-50 s after `fastboot boot`.
+A boot to a fully working system (both panels, touch, Wi-Fi, the modem) is
+hands-off: on 0.20.1 the lock screen comes 22 s after the kernel starts
+(stock Android on the same phone: 14 s; 0.20: 48 s).
 
 ## What it looks like
 
@@ -70,24 +68,29 @@ shell is **experimental and in development**.
 Opening an app, from the request to its first frame, on the same Surface Duo 1
 (median of 10, ms):
 
-| | stock Android 12L | 0.20 on Droidian 102 | 0.18 on Droidian 101 |
-|---|---|---|---|
-| Settings | 368 | 794 | 1166 |
-| Calculator | 340 | 687 | 1045 |
-| Contacts | 413 | 649 | 1022 |
-| Camera | 308 | 935 | 1332 |
-| Browser | 507 (Edge) | 1289 (GNOME Web) | 2339 (Firefox) |
-| Calendar | 584 (Outlook) | 1747 | 2038 |
-| Clock, already running | 92 | 59 | 135 |
-| Phone, already running | 92 | 59 | 303 |
-| Messages, already running | 121 | 133 | 242 |
-| A minimized app back from the dock | - | 59 | 444-491 |
-| Opening the app grid, frames dropped | 2 | 0 | 0 |
-| Closed phone, battery draw, mA | - | 35-65 | 58 (6-hour average) |
+| | stock Android 12L | 0.20.1 on Droidian 102 | 0.20 on Droidian 102 | 0.18 on Droidian 101 |
+|---|---|---|---|---|
+| Settings | 368 | 704 | 794 | 1166 |
+| Calculator | 340 | 573 | 687 | 1045 |
+| Contacts | 413 | 561 | 649 | 1022 |
+| Camera | 308 | 832 | 935 | 1332 |
+| Browser | 507 (Edge) | 1202 (GNOME Web) | 1289 (GNOME Web) | 2339 (Firefox) |
+| Calendar | 584 (Outlook) | 1572 | 1747 | 2038 |
+| Clock, already running | 92 | 59 | 59 | 135 |
+| Phone, already running | 92 | 59 | 59 | 303 |
+| Messages, already running | 121 | 133 | 133 | 242 |
+| A minimized app back from the dock | - | 59 | 59 | 444-491 |
+| Opening the app grid, frames dropped | 2 | 0 | 0 | 0 |
+| Boot, kernel start to the lock screen, s | 13.75 | 22.3 | 47.7 | - |
+| Closed phone, battery draw, mA | - | 46-48 | 35-65; 74 with the modem on 3G | 58 (6-hour average) |
 
-A third faster than on 101; stock Android still opens apps about twice as
-fast. The closed phone's draw on 102 is read after the fix of #230 (it was
-~150 mA before), not yet averaged over hours. All the numbers, the Surface Duo 2 beside them, and how they are taken:
+0.20.1 opens apps 7-21 % faster than 0.20 (the launch boost now does what
+Android's does for the 2 s after a tap), boots in half the time (no search for
+an LVM volume, and no serial console nobody reads - the kernel waited for it),
+and a closed phone stays at 46-48 mA instead of drifting to 74 (the modem no
+longer sits on 3G asking for 5G it does not have). Stock Android still opens apps about 1.5-2x as fast.
+Rows 0.20.1 did not change are carried over from 0.20. All the numbers, the
+Surface Duo 2 beside them, and how they are taken:
 [docs/SPEED.md](docs/SPEED.md).
 
 ## Repository layout
