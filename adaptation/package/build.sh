@@ -11,7 +11,7 @@ ACCESS="$HERE/../access"
 SYSTEM="$HERE/../system"
 SHELLDIR="$HERE/../shell"
 BUSYBOX="$ROOT/out/busybox-arm64"
-VER="${1:-0.20.0}"
+VER="${1:-0.20.1}"
 OUT="$ROOT/out"
 PKG="$OUT/pkgroot"
 
@@ -1044,7 +1044,7 @@ if [ -n "$PHOSH_ANY" ]; then
     install -Dm644 "$SHELLDIR/qcom,sm8150-mtp.json" \
         "$PKG/usr/lib/sfduo/phosh/display-panels/qcom,sm8150-mtp.json"
 fi
-# The patched phoc (../shell/phoc-patches/0001-0024): tiled windows stop
+# The patched phoc (../shell/phoc-patches/0001-0027): tiled windows stop
 # short of the hinge named by `tiling-seam` in phoc.ini, a new window opens
 # on the panel touched last, a closed one fades away and a minimized one
 # drops to the bottom edge, a bar giving up its reservation gives it up at
@@ -1057,12 +1057,13 @@ fi
 # reserves that panel's bottom, a window drawing into subsurfaces of its own
 # (Firefox) slides itself to the other panel, a move to the other panel
 # turns like a page about the hinge (#239), the folded bars' pixels are not
-# taken from windows, and a tiled window is tiled on all four edges.
+# taken from windows, a tiled window is tiled on all four edges, and a window
+# scaled to fit a panel reaches 2 px past its edges (no line of wallpaper).
 # Version-locked like phosh: see sfduo-phoc-install. Built per
 # ../shell/README.md.
 install -m755 "$SHELLDIR/sfduo-phoc-install" "$PKG/usr/local/sbin/"
 # The same patches on both releases: 102's phoc is 101's source rebuilt.
-# 0.20 is built for 102; 101's binary is 0.18's, without 0021-0024.
+# 0.20.1 is built for 102; 101's binary is 0.18's, without 0021-0027.
 carry phoc phoc "$ROOT/out/phoc/phoc-0.47.0-98211ea-sfduo" \
     "0.47.0-1~git20250520212245.98211ea.next.phosh.0.47" || true
 carry phoc phoc "$ROOT/out/phoc/phoc-0.47.0-7e682c6-sfduo" \
