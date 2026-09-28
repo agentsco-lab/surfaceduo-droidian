@@ -31,7 +31,9 @@ wait_for() {        # wait_for <seconds> <command...>
 # umts - whenever the modem (re)appears while Wi-Fi is up (a SIM swapped in,
 # the radio restarted), without looking at its own radio-power-saving, which
 # is off. Only a preference set that way is put back: with radio-power-saving
-# turned on the phone's user asked for it.
+# turned on the phone's user asked for it. It also sets the highest one the
+# modem lists, nr, with the screen on: the Duo's X24 lists nr but has no 5G,
+# and preferring it the modem stayed on 3G. nr is put back to lte always.
 if [ "$1" = watch ]; then
     radio_saving() {
         runuser -u droidian -- gsettings get org.adishatz.Mps radio-power-saving 2>/dev/null |
@@ -40,6 +42,11 @@ if [ "$1" = watch ]; then
     dbus-monitor --system "type='signal',interface='org.ofono.RadioSettings',member='PropertyChanged'" 2>/dev/null |
     while read -r line; do
         case $line in
+            *'string "nr"'*)
+                sleep 2
+                ofono org.ofono.RadioSettings SetProperty sv TechnologyPreference s lte &&
+                    echo "sfduo-modem: nr set back to lte (no 5G on this modem)"
+                ;;
             *'string "umts"'*|*'string "gsm"'*)
                 radio_saving && continue
                 sleep 2    # let the setter's own call return first
