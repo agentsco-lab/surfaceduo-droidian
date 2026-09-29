@@ -34,7 +34,7 @@ OUTPUT = "/usr/share/sfduo/gtk.css"
 # phosh's grid behind the dock, the bar moving to the free panel: templates
 # in this directory, filled in the same way and appended after the port's.
 EXTRA = "/usr/share/item/css"
-# `sfduo-shell --stock` (and `sfduo-phosh-install --restore`) leave this: the
+# `sfduo-phosh-install --restore` (and item-shell's `sfduo-shell --stock`) leave this: the
 # packaged phosh has no seam to keep its furniture off, and the margins made
 # for the port's phosh only push its own about. The user's gtk.css stays a
 # link to OUTPUT, so an empty OUTPUT is the whole of turning it off.

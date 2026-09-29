@@ -105,5 +105,5 @@ the above: it grabs `surface_touchscreen` and writes `sfduo touchscreen`
 `BTN_TOOL_RUBBER`, `BTN_TOUCH`, `BTN_STYLUS`, `ABS_X` / `ABS_Y` with the
 panel's resolution, `ABS_PRESSURE`; `ID_INPUT_TABLET`). libinput takes the
 pen as a tablet tool, and GTK's stylus gesture gets its pressure: the pen
-sheet right of the right panel (`sfduo-pen-screen`) draws with the pen
-only. It needs `python3-evdev`, which the package now recommends.
+sheet right of the right panel (`sfduo-pen-screen`, part of the two-panel
+shell, item-shell) draws with the pen only. It needs `python3-evdev`, which the package now recommends.
