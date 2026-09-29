@@ -27,17 +27,22 @@ hands-off: on 0.20.1 the lock screen comes 22 s after the kernel starts
 ## What it looks like
 
 Screenshots of the one output both panels share (2784x1800; the 84 px column
-the hinge hides is in the middle), taken on 0.20.1 at the port's output scale
-of 2. The two-panel shell is **experimental and in development**.
+the hinge hides is in the middle), taken on 0.21.0 at the port's output
+scale of 2: Droidian's own shell, with the fixes the seam needs.
 
 | | |
 |---|---|
-| ![the desktop: the dock in two halves and the clock](docs/img/shell-desktop.png) | ![Settings on one panel, the clock on the other](docs/img/shell-window.png) |
-| Nothing open: the dock in two halves at the panels' outer edges, under the thumbs, and the time, the date and the weather on the right panel. No status bar - since 0.17 there is none outside the lock screen. | The port's Settings on the panel it was opened on: the pages that apply to this phone, grouped, with its own Surface Duo page (the two-panel shell, the output scale, idle blanking) at the end. Back is the arrow in the corner under the thumb; the clock and the dock move to the free panel. |
-| ![a window on each panel](docs/img/shell-two.png) | ![the right-hand shade](docs/img/shell-shade.png) |
-| A window on each panel, each at its panel's full height: with both panels taken the dock and the clock step aside. | The right-hand shade: the clock, the date, signal, Wi-Fi and battery, the open windows with the panel each is on, and the notifications. The left-hand one holds the settings. |
-| ![the lock screen](docs/img/shell-lockscreen.png) | |
-| The lock screen keeps its bar, kept off the hinge by CSS alone; 55-60 fps on the unlock swipe at scale 2. | |
+| ![a window on the left panel, the app grid on the right](docs/img/port-desktop.png) | ![a window on each panel](docs/img/port-two.png) |
+| A window on one panel and the free one as its desktop: the app grid in three columns, the wallpaper to the bottom edge. An app started from it opens on that panel; the handle under the window pulls the overview up. | A window on each panel, each maximized to its own. |
+| ![the app grid with nothing open](docs/img/port-grid.png) | ![the left-hand shade](docs/img/port-shade.png) |
+| Nothing open: the app grid across both panels, six columns with the hinge between the third and the fourth, and a top bar per half. | A shade per half, each pulled down on its own and neither cut in two by the hinge. |
+| ![the keyboard on one panel](docs/img/port-keyboard.png) | ![the lock screen](docs/img/port-lockscreen.png) |
+| The on-screen keyboard on one panel - the right one - instead of across the hinge. | The lock screen, its clock on the right panel. |
+
+The two-panel shell - a dock across both panels, windows tiled to the panel
+they were launched from - is item-shell, from
+[agentsco-lab/item](https://github.com/agentsco-lab/item); its screenshots
+are there.
 
 ## Status (2026-09-29, 0.21.0 on Droidian 102)
 
