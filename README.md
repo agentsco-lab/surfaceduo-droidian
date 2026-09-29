@@ -1,12 +1,11 @@
 # Droidian on Microsoft Surface Duo 1
 
-> **This repository is the port: the hardware and the system.** Fixes for the
-> hardware and for speed come here, promptly, as long as they work on
-> Droidian as it ships. The two-panel shell is developed at
-> [agentsco-lab/item](https://github.com/agentsco-lab/item). From 0.21 the
-> port runs Droidian's own shell, with only the fixes the hinge's seam needs,
-> and the two-panel shell becomes a package from item to install on top;
-> 0.20.x still carries the shell as it was.
+> **This repository is the port: the hardware and the system.** It runs
+> Droidian's own shell, with only the fixes the hinge's seam needs. The
+> two-panel shell - a dock across both panels, windows tiled to the panel
+> they were launched from - is item-shell, a package of its own to install
+> on top, developed at [agentsco-lab/item](https://github.com/agentsco-lab/item).
+> Up to 0.20.x the port carried that shell itself.
 
 **An independent Linux port for the Microsoft Surface Duo 1** - Debian
 arm64 (Droidian, Halium-based) running with both OLED panels and touch,
@@ -40,7 +39,7 @@ of 2. The two-panel shell is **experimental and in development**.
 | ![the lock screen](docs/img/shell-lockscreen.png) | |
 | The lock screen keeps its bar, kept off the hinge by CSS alone; 55-60 fps on the unlock swipe at scale 2. | |
 
-## Status (2026-09-28, 0.20.1 on Droidian 102)
+## Status (2026-09-29, 0.21.0 on Droidian 102)
 
 | Subsystem | Status | Notes |
 |---|---|---|
@@ -91,7 +90,10 @@ Android's does for the 2 s after a tap), boots in half the time (no search for
 an LVM volume, and no serial console nobody reads - the kernel waited for it),
 and a closed phone stays at 46-48 mA instead of drifting to 74 (the modem no
 longer sits on 3G asking for 5G it does not have). Stock Android still opens apps about 1.5-2x as fast.
-Rows 0.20.1 did not change are carried over from 0.20. All the numbers, the
+Rows 0.20.1 did not change are carried over from 0.20. These were taken with
+the two-panel shell, which launched the apps through its dock; 0.21 runs
+Droidian's own shell with the same launch boost, and its own
+numbers come once the bench can launch without the dock. All the numbers, the
 Surface Duo 2 beside them, and how they are taken:
 [docs/SPEED.md](docs/SPEED.md).
 
@@ -109,9 +111,10 @@ Surface Duo 2 beside them, and how they are taken:
 - `adaptation/system/` - the slot guard that keeps the bootloader on slot
   A, the lid policy (closing the device locks it), panel power without the
   compositor.
-- `adaptation/shell/` - **experimental**: phosh across both panels. A dock
-  that launches onto the panel you touch, the CSS that moves everything the
-  shell centres off the seam, and patches for phosh itself (its own README
+- `adaptation/shell/` - Droidian's shell on two panels: patches for phosh,
+  phoc and the on-screen keyboard where they meet the hinge's seam, the CSS
+  that moves everything the shell centres off it, the output scale, and the
+  install scripts that put the patched programs in place (its own README
   covers the mechanisms and the traps).
 - `sensorfw-hinge-patch/` - hinge-angle sensor support for sensorfw
   (its own README covers build + install).
@@ -144,9 +147,10 @@ Surface Duo 2 beside them, and how they are taken:
    many boring-stable cycles behind you.
 7. The first boot installs the package and **reboots once, into
    fastboot**; RAM-boot the same image again, and that is the real one.
-   Connect to Wi-Fi, run `sudo sfduo-shell-setup` and reboot: the
-   two-panel shell, the pen and the full-size root filesystem come with
-   it.
+   Connect to Wi-Fi, run `sudo sfduo-shell-setup` and reboot: the pen
+   and the full-size root filesystem come with it. The two-panel shell is
+   `sudo apt install ./item-shell_<version>_arm64.deb` from
+   [agentsco-lab/item](https://github.com/agentsco-lab/item), if you want it.
 
 This path was run end to end on an untouched Droidian 102 nightly
 (2026-09-27) with the 0.20 package; what it found is in the 0.20.0 notes.
