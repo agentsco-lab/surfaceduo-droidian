@@ -1,3 +1,12 @@
+From 2b4cb8543c3413e9bb6b116d67c06a54bdf26f2c Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
+Date: Thu, 24 Sep 2026 22:27:22 +0300
+Subject: [PATCH 06/10] overview: no thumbnail for an activity nobody can see
+
+---
+ src/overview.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
 diff --git a/src/overview.c b/src/overview.c
 index 8fae71c8..ab30bccb 100644
 --- a/src/overview.c
@@ -22,3 +31,6 @@ index 8fae71c8..ab30bccb 100644
    scale = gtk_widget_get_scale_factor (GTK_WIDGET (activity));
    phosh_activity_get_thumbnail_allocation (activity, &allocation);
    thumbnail = phosh_toplevel_thumbnail_new_from_toplevel (toplevel, allocation.width * scale,
+-- 
+2.43.0
+

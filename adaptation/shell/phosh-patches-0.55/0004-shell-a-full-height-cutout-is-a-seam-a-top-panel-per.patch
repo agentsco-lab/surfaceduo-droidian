@@ -1,3 +1,21 @@
+From e5231b83f600544860ccf10021b395e28319561f Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
+Date: Thu, 24 Sep 2026 22:27:22 +0300
+Subject: [PATCH 04/10] shell: a full-height cutout is a seam - a top panel per
+ half
+
+On a display with a seam - a cutout running its whole height, which is
+what a hinge between two halves looks like - the top panel is made once
+per half, each with its own bar and its own shade, so that neither is cut
+in two by the bezel. The layout manager says where the seam is.
+---
+ src/layout-manager.c |  72 +++++++++++++++++++++++
+ src/layout-manager.h |   2 +
+ src/shell.c          | 133 +++++++++++++++++++++++++++++++++++++++----
+ src/top-panel.c      |  23 +++++++-
+ src/top-panel.h      |   5 +-
+ 5 files changed, 221 insertions(+), 14 deletions(-)
+
 diff --git a/src/layout-manager.c b/src/layout-manager.c
 index a6187ac7..a5765db2 100644
 --- a/src/layout-manager.c
@@ -97,10 +115,10 @@ index 36c9a912..3eb450b5 100644
 +                                                                        GdkRectangle *seam);
  G_END_DECLS
 diff --git a/src/shell.c b/src/shell.c
-index 2987a0c2..68e14db4 100644
+index 2987a0c2..a231089d 100644
 --- a/src/shell.c
 +++ b/src/shell.c
-@@ -144,6 +144,14 @@ static PhoshShellDebugFlags debug_flags;
+@@ -144,6 +144,10 @@ static PhoshShellDebugFlags debug_flags;
  
  typedef struct {
    PhoshDragSurface           *top_panel;
@@ -108,14 +126,10 @@ index 2987a0c2..68e14db4 100644
 +   * two are independent: each folds, unfolds and drags on its own, so
 +   * each half of the device has its own shade. NULL otherwise. */
 +  PhoshDragSurface           *top_panel_right;
-+  /* Which half's shade is open, said out loud on the session bus so that
-+   * anything drawing over the shell can keep out of the way. */
-+  GDBusConnection            *shade_bus;
-+  const char                 *shade_open;
    PhoshDragSurface           *home;
    gboolean                    overview_visible;
    GPtrArray                  *faders; /* for final fade out */
-@@ -237,10 +245,10 @@ static void
+@@ -237,10 +241,10 @@ static void
  on_top_panel_activated (PhoshShell    *self,
                          PhoshTopPanel *window)
  {
@@ -130,7 +144,7 @@ index 2987a0c2..68e14db4 100644
  }
  
  
-@@ -277,6 +285,8 @@ update_top_level_layer (PhoshShell *self)
+@@ -277,6 +281,8 @@ update_top_level_layer (PhoshShell *self)
  
    g_debug ("Moving top-panel to %s layer", use_top_layer ? "top" : "overlay");
    phosh_top_panel_set_layer (PHOSH_TOP_PANEL (priv->top_panel), layer);
@@ -139,156 +153,15 @@ index 2987a0c2..68e14db4 100644
  }
  
  
-@@ -293,6 +303,139 @@ on_proximity_near_changed (PhoshShell *self)
- }
- 
- 
-+/* {{{ Saying which half's shade is open */
-+/*
-+ * A shell whose display is split in two draws a shade over one half while
-+ * the other half carries on. Anything of its own that sits above the shell -
-+ * a launcher along the bottom edge, say - has no way to know that, and its
-+ * gestures go on working through a shade the hand thinks is in front of
-+ * them. So the shell says so: `org.sfduo.Shade` on the session bus, one
-+ * read-only property, "none", "left", "right" or "both", with the usual
-+ * PropertiesChanged behind it.
-+ */
-+#define SHADE_BUS_NAME "org.sfduo.Shade"
-+#define SHADE_OBJECT_PATH "/org/sfduo/Shade"
-+#define SHADE_IFACE "org.sfduo.Shade"
-+
-+static const char shade_introspection_xml[] =
-+  "<node>"
-+  "  <interface name='org.sfduo.Shade'>"
-+  "    <property name='Open' type='s' access='read'/>"
-+  "  </interface>"
-+  "</node>";
-+
-+
-+static const char *
-+shade_open_halves (PhoshShell *self)
-+{
-+  PhoshShellPrivate *priv = phosh_shell_get_instance_private (self);
-+  gboolean near_open, far_open;
-+
-+  if (priv->top_panel == NULL)
-+    return "none";
-+
-+  near_open = phosh_top_panel_get_state (PHOSH_TOP_PANEL (priv->top_panel)) ==
-+    PHOSH_TOP_PANEL_STATE_UNFOLDED;
-+  far_open = priv->top_panel_right != NULL &&
-+    phosh_top_panel_get_state (PHOSH_TOP_PANEL (priv->top_panel_right)) ==
-+    PHOSH_TOP_PANEL_STATE_UNFOLDED;
-+
-+  /* The near panel is the one anchored to the left of the seam */
-+  if (near_open && far_open)
-+    return "both";
-+  if (near_open)
-+    return "left";
-+  if (far_open)
-+    return "right";
-+
-+  return "none";
-+}
-+
-+
-+static GVariant *
-+shade_get_property (GDBusConnection *connection,
-+                    const char      *sender,
-+                    const char      *object_path,
-+                    const char      *interface_name,
-+                    const char      *property_name,
-+                    GError         **error,
-+                    gpointer         user_data)
-+{
-+  PhoshShell *self = PHOSH_SHELL (user_data);
-+  PhoshShellPrivate *priv = phosh_shell_get_instance_private (self);
-+
-+  if (g_strcmp0 (property_name, "Open") == 0)
-+    return g_variant_new_string (priv->shade_open ?: "none");
-+
-+  return NULL;
-+}
-+
-+static const GDBusInterfaceVTable shade_vtable = {
-+  NULL, shade_get_property, NULL, { NULL, }
-+};
-+
-+
-+static void
-+shade_publish (PhoshShell *self)
-+{
-+  PhoshShellPrivate *priv = phosh_shell_get_instance_private (self);
-+  const char *open = shade_open_halves (self);
-+  GVariantBuilder changed;
-+
-+  if (priv->shade_bus == NULL || g_strcmp0 (open, priv->shade_open) == 0)
-+    return;
-+
-+  priv->shade_open = open;
-+  g_debug ("Shade open on: %s", open);
-+
-+  g_variant_builder_init (&changed, G_VARIANT_TYPE ("a{sv}"));
-+  g_variant_builder_add (&changed, "{sv}", "Open", g_variant_new_string (open));
-+  g_dbus_connection_emit_signal (priv->shade_bus, NULL, SHADE_OBJECT_PATH,
-+                                 "org.freedesktop.DBus.Properties",
-+                                 "PropertiesChanged",
-+                                 g_variant_new ("(sa{sv}as)", SHADE_IFACE, &changed, NULL),
-+                                 NULL);
-+}
-+
-+
-+static void
-+shade_service_start (PhoshShell *self)
-+{
-+  PhoshShellPrivate *priv = phosh_shell_get_instance_private (self);
-+  g_autoptr (GDBusNodeInfo) node = NULL;
-+  g_autoptr (GError) err = NULL;
-+
-+  if (priv->shade_bus != NULL)
-+    return;
-+
-+  priv->shade_bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, &err);
-+  if (priv->shade_bus == NULL) {
-+    g_warning ("No session bus for %s: %s", SHADE_BUS_NAME, err->message);
-+    return;
-+  }
-+
-+  node = g_dbus_node_info_new_for_xml (shade_introspection_xml, &err);
-+  if (node == NULL) {
-+    g_warning ("Cannot describe %s: %s", SHADE_IFACE, err->message);
-+    g_clear_object (&priv->shade_bus);
-+    return;
-+  }
-+
-+  if (g_dbus_connection_register_object (priv->shade_bus, SHADE_OBJECT_PATH,
-+                                         node->interfaces[0], &shade_vtable,
-+                                         self, NULL, &err) == 0) {
-+    g_warning ("Cannot publish %s: %s", SHADE_OBJECT_PATH, err->message);
-+    g_clear_object (&priv->shade_bus);
-+    return;
-+  }
-+
-+  g_bus_own_name_on_connection (priv->shade_bus, SHADE_BUS_NAME,
-+                                G_BUS_NAME_OWNER_FLAGS_NONE, NULL, NULL, NULL, NULL);
-+  priv->shade_open = "none";
-+}
-+
-+/* }}} */
-+
- static void
- on_top_panel_state_changed (PhoshShell *self, GParamSpec *pspec, PhoshTopPanel *top_panel)
- {
-@@ -305,9 +448,35 @@ on_top_panel_state_changed (PhoshShell *self, GParamSpec *pspec, PhoshTopPanel *
+@@ -305,9 +311,34 @@ on_top_panel_state_changed (PhoshShell *self, GParamSpec *pspec, PhoshTopPanel *
    priv = phosh_shell_get_instance_private (self);
  
    state = phosh_top_panel_get_state (PHOSH_TOP_PANEL (priv->top_panel));
 +  if (state != PHOSH_TOP_PANEL_STATE_UNFOLDED && priv->top_panel_right)
 +    state = phosh_top_panel_get_state (PHOSH_TOP_PANEL (priv->top_panel_right));
    phosh_shell_set_state (self, PHOSH_STATE_SETTINGS, state == PHOSH_TOP_PANEL_STATE_UNFOLDED);
-+  shade_publish (self);
-+}
-+
+ }
+ 
 +/* Whether every top panel is folded away. With a panel per half of the
 + * display, "the shade is closed" means both of them are. */
 +static gboolean
@@ -309,13 +182,13 @@ index 2987a0c2..68e14db4 100644
 +    return FALSE;
 +
 +  return TRUE;
- }
- 
++}
++
 +
  static void
  update_top_bar_transparency (PhoshShell *self)
  {
-@@ -319,12 +488,18 @@ update_top_bar_transparency (PhoshShell *self)
+@@ -319,12 +350,18 @@ update_top_bar_transparency (PhoshShell *self)
  
    if (priv->locked) {
      phosh_top_panel_set_bar_transparent (PHOSH_TOP_PANEL (priv->top_panel), TRUE);
@@ -334,7 +207,7 @@ index 2987a0c2..68e14db4 100644
  }
  
  
-@@ -371,6 +546,11 @@ on_primary_monitor_configured (PhoshShell *self, PhoshMonitor *monitor)
+@@ -371,6 +408,11 @@ on_primary_monitor_configured (PhoshShell *self, PhoshMonitor *monitor)
  
    phosh_shell_get_area (self, NULL, &height);
    phosh_layer_surface_set_size (PHOSH_LAYER_SURFACE (priv->top_panel), -1, height);
@@ -346,7 +219,7 @@ index 2987a0c2..68e14db4 100644
  }
  
  
-@@ -405,19 +585,73 @@ panels_create (PhoshShell *self)
+@@ -405,18 +447,71 @@ panels_create (PhoshShell *self)
    PhoshMonitor *monitor;
    PhoshAppGrid *app_grid;
    guint32 top_layer;
@@ -422,11 +295,9 @@ index 2987a0c2..68e14db4 100644
 +                                            PHOSH_TOP_BAR_HEIGHT));
 +  }
    gtk_widget_set_visible (GTK_WIDGET (priv->top_panel), TRUE);
-+  shade_service_start (self);
  
    /* Home is created after the top-panel so it honors its exclusive zone */
-   priv->home = PHOSH_DRAG_SURFACE (phosh_home_new (phosh_wayland_get_zwlr_layer_shell_v1 (wl),
-@@ -435,6 +669,17 @@ panels_create (PhoshShell *self)
+@@ -435,6 +530,17 @@ panels_create (PhoshShell *self)
                              G_CALLBACK (on_top_panel_state_changed),
                              self);
  
@@ -444,7 +315,7 @@ index 2987a0c2..68e14db4 100644
    g_signal_connect_swapped (priv->home,
                              "notify::state",
                              G_CALLBACK (on_home_state_changed),
-@@ -454,6 +699,7 @@ panels_dispose (PhoshShell *self)
+@@ -454,6 +560,7 @@ panels_dispose (PhoshShell *self)
  {
    PhoshShellPrivate *priv = phosh_shell_get_instance_private (self);
  
@@ -452,7 +323,7 @@ index 2987a0c2..68e14db4 100644
    g_clear_pointer (&priv->top_panel, phosh_cp_widget_destroy);
    g_clear_pointer (&priv->home, phosh_cp_widget_destroy);
  }
-@@ -475,6 +721,8 @@ set_locked (PhoshShell *self, gboolean locked)
+@@ -475,6 +582,8 @@ set_locked (PhoshShell *self, gboolean locked)
       unblanking the screen which can be confusing */
    if (priv->top_panel)
      phosh_top_panel_fold (PHOSH_TOP_PANEL (priv->top_panel));
@@ -461,7 +332,7 @@ index 2987a0c2..68e14db4 100644
  
    update_top_level_layer (self);
    update_top_bar_transparency (self);
-@@ -711,7 +959,7 @@ on_new_notification (PhoshShell         *self,
+@@ -711,7 +820,7 @@ on_new_notification (PhoshShell         *self,
    /* Clear existing banner */
    g_clear_pointer (&priv->notification_banner, phosh_cp_widget_destroy);
    if (phosh_notify_manager_get_show_notification_banner (manager, notification) &&
@@ -470,7 +341,7 @@ index 2987a0c2..68e14db4 100644
        !priv->locked) {
      priv->notification_banner = phosh_notification_banner_new (notification);
      g_signal_connect (priv->notification_banner,
-@@ -743,6 +991,8 @@ on_notification_activated (PhoshShell *self)
+@@ -743,6 +852,8 @@ on_notification_activated (PhoshShell *self)
    priv = phosh_shell_get_instance_private (self);
  
    phosh_top_panel_fold (PHOSH_TOP_PANEL (priv->top_panel));
@@ -549,3 +420,6 @@ index 1e4748ad..33253f69 100644
  void               phosh_top_panel_toggle_fold (PhoshTopPanel *self);
  void               phosh_top_panel_fold (PhoshTopPanel *self);
  void               phosh_top_panel_unfold (PhoshTopPanel *self);
+-- 
+2.43.0
+

@@ -1,8 +1,8 @@
-From 8640b108e1d3494029139528e4f4ffdb89db717f Mon Sep 17 00:00:00 2001
+From 3e1b0697a978c2ce5500574cc21c69bfcbc51992 Mon Sep 17 00:00:00 2001
 From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Sun, 20 Sep 2026 01:25:32 +0300
-Subject: [PATCH] view: a window on a panel is fitted into it, and maximized
- means one panel
+Subject: [PATCH 04/13] view: a window on a panel is fitted into it, and
+ maximized means one panel
 
 On an output with a tiling-seam, maximizing put a window across the hinge:
 maximized is the panel the window is on now. And a window whose minimum
@@ -17,10 +17,10 @@ difference.
  1 file changed, 89 insertions(+), 3 deletions(-)
 
 diff --git a/src/view.c b/src/view.c
-index 9c447dd..1c31d40 100644
+index 022d02f..f0ef8ea 100644
 --- a/src/view.c
 +++ b/src/view.c
-@@ -254,6 +254,10 @@ toggle_decoration (PhocView *self)
+@@ -251,6 +251,10 @@ toggle_decoration (PhocView *self)
    }
  }
  
@@ -31,7 +31,7 @@ index 9c447dd..1c31d40 100644
  /* {{{ Foreign toplevel requests  */
  
  static void
-@@ -710,6 +714,13 @@ phoc_view_get_maximized_box (PhocView *self, PhocOutput *output, struct wlr_box
+@@ -691,6 +695,13 @@ phoc_view_get_maximized_box (PhocView *self, PhocOutput *output, struct wlr_box
    if (!output)
      return FALSE;
  
@@ -45,7 +45,7 @@ index 9c447dd..1c31d40 100644
    struct wlr_box output_box;
    wlr_output_layout_get_box (desktop->layout, output->wlr_output, &output_box);
    struct wlr_box usable_area = output->usable_area;
-@@ -736,6 +747,8 @@ view_arrange_maximized (PhocView *self, PhocOutput *output)
+@@ -717,6 +728,8 @@ view_arrange_maximized (PhocView *self, PhocOutput *output)
  
    if (!phoc_view_get_maximized_box (self, output, &box))
      return;
@@ -54,7 +54,7 @@ index 9c447dd..1c31d40 100644
  
    phoc_view_get_geometry (self, &geom);
    box.x -= geom.x / priv->scale;
-@@ -835,6 +848,8 @@ view_arrange_tiled (PhocView *self, PhocOutput *output)
+@@ -816,6 +829,8 @@ view_arrange_tiled (PhocView *self, PhocOutput *output)
  
    if (!phoc_view_get_tiled_box (self, priv->tile_direction, output, &box))
      return;
@@ -63,7 +63,7 @@ index 9c447dd..1c31d40 100644
  
    phoc_view_get_geometry (self, &geom);
    box.x -= geom.x / priv->scale;
-@@ -926,6 +941,7 @@ phoc_view_restore (PhocView *self)
+@@ -907,6 +922,7 @@ phoc_view_restore (PhocView *self)
  
    PHOC_VIEW_GET_CLASS (self)->set_maximized (self, false);
    PHOC_VIEW_GET_CLASS (self)->set_tiled (self, false);
@@ -71,7 +71,7 @@ index 9c447dd..1c31d40 100644
  }
  
  /**
-@@ -1141,6 +1157,9 @@ phoc_view_tile (PhocView *self, PhocViewTileDirection direction, PhocOutput *out
+@@ -1122,6 +1138,9 @@ phoc_view_tile (PhocView *self, PhocViewTileDirection direction, PhocOutput *out
      wlr_foreign_toplevel_handle_v1_set_maximized (priv->toplevel_handle, false);
  
    view_arrange_tiled (self, output);
@@ -81,7 +81,7 @@ index 9c447dd..1c31d40 100644
  }
  
  
-@@ -1275,6 +1294,56 @@ munge_app_id (const gchar *app_id)
+@@ -1256,6 +1275,56 @@ munge_app_id (const gchar *app_id)
    return id;
  }
  
@@ -138,7 +138,7 @@ index 9c447dd..1c31d40 100644
  static void
  view_update_scale (PhocView *view)
  {
-@@ -1292,10 +1361,27 @@ view_update_scale (PhocView *view)
+@@ -1273,10 +1342,27 @@ view_update_scale (PhocView *view)
      return;
  
    float scalex = 1.0f, scaley = 1.0f, oldscale = priv->scale;

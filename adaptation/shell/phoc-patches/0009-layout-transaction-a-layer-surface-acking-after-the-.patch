@@ -1,8 +1,8 @@
-From 1122e223da79dd4ae1dda98e98507ed2596430bf Mon Sep 17 00:00:00 2001
+From 25b9743030bce1234d2f455dd969522d1a56d306 Mon Sep 17 00:00:00 2001
 From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 14:26:17 +0300
-Subject: [PATCH] layout-transaction: a layer surface acking after the timeout
- is not an error
+Subject: [PATCH 09/13] layout-transaction: a layer surface acking after the
+ timeout is not an error
 
 A layer surface configured while the display is off draws, and acks, only
 once the display is back on - after the 3 s timeout has set the count of

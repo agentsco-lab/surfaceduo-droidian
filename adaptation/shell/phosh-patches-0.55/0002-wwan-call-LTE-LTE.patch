@@ -1,3 +1,13 @@
+From 03084a139419cf0f3f1013dc8eaddb4b02fd96ee Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
+Date: Thu, 24 Sep 2026 22:27:22 +0300
+Subject: [PATCH 02/10] wwan: call LTE "LTE"
+
+---
+ src/wwan/phosh-wwan-mm.c    | 2 +-
+ src/wwan/phosh-wwan-ofono.c | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
 diff --git a/src/wwan/phosh-wwan-mm.c b/src/wwan/phosh-wwan-mm.c
 index ac9b5ab9..55da95fe 100644
 --- a/src/wwan/phosh-wwan-mm.c
@@ -24,3 +34,6 @@ index b25bd319..0bc55261 100644
    if (g_strcmp0 (access_tec, "nr") == 0)
      return "5G";
  
+-- 
+2.43.0
+

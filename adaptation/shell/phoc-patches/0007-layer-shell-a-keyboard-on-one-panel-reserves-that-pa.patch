@@ -1,8 +1,8 @@
-From 289aaa17220c4ef41dda09264e0c1990912f3359 Mon Sep 17 00:00:00 2001
+From 904b9d4b35827d89367ae619590951d7f463fbb6 Mon Sep 17 00:00:00 2001
 From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 02:51:36 +0300
-Subject: [PATCH] layer-shell: a keyboard on one panel reserves that panel's
- bottom
+Subject: [PATCH 07/13] layer-shell: a keyboard on one panel reserves that
+ panel's bottom
 
 On an output with a tiling-seam, a layer surface anchored to the bottom and one side that asks for an exclusive zone reserves the bottom of the panel it stands on: windows tiled there are made that much shorter, the other panel's are left alone. The protocol gives a corner-anchored surface no zone, so windows stayed under the one-panel keyboard. The reservation is what the surface asks for, not where its slide has got to, so windows are resized once. A window fitted into a panel by scaling (0008) is asked for the box's height at its scale, rather than centred in a shorter box with its bottom still under the keyboard.
 ---
@@ -100,10 +100,10 @@ index f1a0814..d31d944 100644
  
    struct wl_listener        commit;
 diff --git a/src/view.c b/src/view.c
-index 6795229..24635ee 100644
+index f0ef8ea..1a09212 100644
 --- a/src/view.c
 +++ b/src/view.c
-@@ -832,7 +832,10 @@ phoc_view_get_tiled_box (PhocView               *self,
+@@ -812,7 +812,10 @@ phoc_view_get_tiled_box (PhocView               *self,
    box->x = x / priv->scale;
    box->y = usable_area.y / priv->scale;
    box->width = width / priv->scale;
@@ -115,7 +115,7 @@ index 6795229..24635ee 100644
  
    return TRUE;
  }
-@@ -1317,6 +1320,15 @@ view_place_fitted (PhocView *self, const struct wlr_box *box)
+@@ -1295,6 +1298,15 @@ view_place_fitted (PhocView *self, const struct wlr_box *box)
  
    phoc_view_get_geometry (self, &geom);
    x = box->x * s + (box->width * s - geom.width * s) / 2.0 - geom.x * s;

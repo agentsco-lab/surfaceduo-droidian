@@ -1,0 +1,83 @@
+From 44f25ff95a41cc7bba77942f733a2739c727b2a5 Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
+Date: Mon, 28 Sep 2026 23:56:39 +0300
+Subject: [PATCH 08/10] osd: on a display with a seam, the bubble on the right
+ panel
+
+Anchored to the top edge alone the OSD was centred on the output, and on a
+display with a seam that is the hinge: it cut the volume bar in two. It is
+now centred on the right panel - the volume keys are on that edge of the
+device. Without a seam nothing changes.
+---
+ src/osd-window.c | 29 +++++++++++++++++++++++++++--
+ 1 file changed, 27 insertions(+), 2 deletions(-)
+
+diff --git a/src/osd-window.c b/src/osd-window.c
+index d0e58c44..e451b33e 100644
+--- a/src/osd-window.c
++++ b/src/osd-window.c
+@@ -12,6 +12,7 @@
+ #include "util.h"
+ 
+ #include "osd-window.h"
++#include "shell-priv.h"
+ #include "layersurface-priv.h"
+ 
+ #include <gmobile.h>
+@@ -50,6 +51,7 @@ typedef struct _PhoshOsdWindow {
+   GtkWidget       *bar;
+   GtkWidget       *box;
+   GtkGesture      *click_gesture;
++  int              far_half;    /* the right panel's width on a display with a seam, or 0 */
+ } PhoshOsdWindow;
+ 
+ 
+@@ -183,6 +185,11 @@ phosh_osd_window_map (GtkWidget *widget)
+ 
+   width = gtk_widget_get_allocated_width (widget);
+   phosh_layer_surface_set_size (PHOSH_LAYER_SURFACE (self), width, -1);
++  /* centred on the right panel, as it is centred on a display without a seam */
++  if (self->far_half > 0) {
++    phosh_layer_surface_set_margins (PHOSH_LAYER_SURFACE (self), 0,
++                                     MAX ((self->far_half - width) / 2, 0), 0, 0);
++  }
+ }
+ 
+ 
+@@ -282,8 +289,24 @@ phosh_osd_window_new (const char *connector,
+                       double      level,
+                       double      max_level)
+ {
+-  return g_object_new (PHOSH_TYPE_OSD_WINDOW,
+-                       "anchor", ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP,
++  PhoshShell *shell = phosh_shell_get_default ();
++  PhoshMonitor *monitor = phosh_shell_get_primary_monitor (shell);
++  guint32 anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP;
++  PhoshOsdWindow *self;
++  GdkRectangle seam;
++  int far_half = 0;
++
++  /* Anchored to the top edge alone the OSD is centred on the output, and on
++   * a display with a seam the centre is the seam: the hinge cut through the
++   * volume bar. It goes to the right panel instead - the volume keys are on
++   * that edge of the device - centred there. */
++  if (monitor && phosh_layout_manager_get_seam (phosh_shell_get_layout_manager (shell), &seam)) {
++    far_half = monitor->logical.width - (seam.x + seam.width);
++    anchor |= ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
++  }
++
++  self = g_object_new (PHOSH_TYPE_OSD_WINDOW,
++                       "anchor", anchor,
+                        "width", 16,
+                        "connector", connector,
+                        "label",label,
+@@ -293,4 +316,6 @@ phosh_osd_window_new (const char *connector,
+                        "max-level", max_level,
+                        "kbd-interactivity", FALSE,
+                        NULL);
++  self->far_half = far_half;
++  return GTK_WIDGET (self);
+ }
+-- 
+2.43.0
+
