@@ -11,7 +11,7 @@ ACCESS="$HERE/../access"
 SYSTEM="$HERE/../system"
 SHELLDIR="$HERE/../shell"
 BUSYBOX="$ROOT/out/busybox-arm64"
-VER="${1:-0.20.1}"
+VER="${1:-0.21.0}"
 OUT="$ROOT/out"
 PKG="$OUT/pkgroot"
 
@@ -940,8 +940,6 @@ else
     echo "NOTE: no out/sensorfw/*.deb - sfduo-sensorfw-install will have nothing to install"
 fi
 install -m755 "$SYSTEM/sfduo-screens"            "$PKG/usr/local/sbin/"
-install -Dm644 "$SYSTEM/dconf/50-sfduo-phoc"       "$PKG/etc/dconf/db/local.d/50-sfduo-phoc"
-install -Dm644 "$SYSTEM/dconf/locks/50-sfduo-phoc" "$PKG/etc/dconf/db/local.d/locks/50-sfduo-phoc"
 install -Dm644 "$SYSTEM/dconf/profile-user"        "$PKG/etc/dconf/profile/user"
 install -Dm644 "$SYSTEM/dconf/51-sfduo-background" "$PKG/etc/dconf/db/local.d/51-sfduo-background"
 install -Dm644 "$SYSTEM/dconf/52-sfduo-idle"       "$PKG/etc/dconf/db/local.d/52-sfduo-idle"
@@ -963,24 +961,9 @@ install -m755  "$SYSTEM/sfduo-apps"       "$PKG/usr/local/sbin/"
 install -Dm644 "$SYSTEM/apps/hidden.list"           "$PKG/usr/lib/sfduo/apps/hidden.list"
 install -Dm644 "$SYSTEM/phosh-mimeapps.list"        "$PKG/etc/xdg/phosh-mimeapps.list"
 install -Dm644 "$SYSTEM/apps/cool-retro-term.json"  "$PKG/usr/lib/sfduo/apps/cool-retro-term.json"
-# Settings (#77, #78). sfduo-settings is the one Settings in the grid: the
-# pages of GNOME Settings and Mobile Settings grouped for this device, opened
-# from it, plus the port's own. Both old programs leave the grid (NoDisplay
-# overrides - still launchable by id and by D-Bus) and run through
-# sfduo-one-column, installed under their own names first in PATH and in the
-# session bus's service directories: one column on one panel, and Mobile
-# Settings with the GL renderer, since GTK's default draws it empty here. A
-# session bus started before /usr/local/share/dbus-1/services existed learns
-# of it at the next login (or at org.freedesktop.DBus.ReloadConfig).
-install -Dm755 "$SYSTEM/apps/sfduo-settings"             "$PKG/usr/local/bin/sfduo-settings"
-install -Dm644 "$SYSTEM/apps/org.sfduo.Settings.desktop" "$PKG/usr/local/share/applications/org.sfduo.Settings.desktop"
-install -Dm644 "$SYSTEM/apps/org.gnome.Settings.desktop" "$PKG/usr/local/share/applications/org.gnome.Settings.desktop"
-install -Dm644 "$SYSTEM/apps/mobi.phosh.MobileSettings.desktop" "$PKG/usr/local/share/applications/mobi.phosh.MobileSettings.desktop"
-install -Dm755 "$SYSTEM/apps/sfduo-one-column"           "$PKG/usr/local/lib/sfduo/sfduo-one-column"
-ln -sf /usr/local/lib/sfduo/sfduo-one-column "$PKG/usr/local/bin/gnome-control-center"
-ln -sf /usr/local/lib/sfduo/sfduo-one-column "$PKG/usr/local/bin/phosh-mobile-settings"
-install -Dm644 "$SYSTEM/apps/org.gnome.Settings.service"        "$PKG/usr/local/share/dbus-1/services/org.gnome.Settings.service"
-install -Dm644 "$SYSTEM/apps/mobi.phosh.MobileSettings.service" "$PKG/usr/local/share/dbus-1/services/mobi.phosh.MobileSettings.service"
+# The port's own Settings (sfduo-settings, one column on one panel) belongs
+# to the two-panel shell and ships with it, from agentsco-lab/item: the port
+# keeps GNOME Settings and Mobile Settings as Droidian has them.
 mkdir -p "$PKG/usr/local/share/applications"
 sed 's/#.*//' "$SYSTEM/apps/hidden.list" | awk 'NF' | while read -r id; do
     printf '[Desktop Entry]\nType=Application\nName=%s\nNoDisplay=true\nHidden=true\n# hidden by adaptation-droidian-surfaceduo - see /usr/lib/sfduo/apps/hidden.list\n' "${id%.desktop}" \
@@ -998,12 +981,11 @@ fi
 # sfduo-screens ships without its sudoers rule: nothing in the package calls
 # it as the user any more, and a NOPASSWD rule with no caller is only a hole.
 
-# The two-panel shell (../shell/README.md) - EXPERIMENTAL. A dock across both
-# panels that tiles what it launches onto the panel that was tapped, and the
-# CSS that keeps phosh's own furniture off the hinge. It autostarts with the
-# session; `sfduo-shell --stock` (or Settings' Surface Duo page) turns the
-# whole shell off, the dock with it.
-install -m755 "$SHELLDIR/sfduo-dock"       "$PKG/usr/local/bin/"
+# Droidian's own shell on two panels with a seam (../shell/README.md): the
+# patched phosh, phoc and keyboard below, and the CSS that keeps phosh's own
+# furniture off the hinge. The two-panel shell - the dock, the system screen,
+# the pen's sheet, the port's Settings - is a package of its own on top of
+# this one, from agentsco-lab/item.
 install -m755 "$SHELLDIR/sfduo-brightness" "$PKG/usr/local/bin/"
 install -m755 "$SHELLDIR/sfduo-shell-setup" "$PKG/usr/local/sbin/"
 install -m755 "$SHELLDIR/sfduo-phosh-install" "$PKG/usr/local/sbin/"
@@ -1021,14 +1003,12 @@ carry() {   # carry DIR BINARY SOURCE VERSION
         return 1
     fi
 }
-# The patched phosh, built per ../shell/README.md: on Droidian 101 phosh 0.49
-# with ../shell/phosh-patches 0001-0019, on 102 phosh 0.55 with the same
-# patches rebased (../shell/phosh-patches-0.55; 0007 left out - 0.55 shares
-# one brightness between the shades itself). Version-locked: see
-# sfduo-phosh-install.
+# Droidian 102's phosh 0.55 with ../shell/phosh-patches-0.55, built per
+# ../shell/README.md: a top bar and a shade per half, the notification
+# banner, the volume OSD and the launch splash off the hinge, a tap beside
+# the grid's search taking its focus, and fixes worth sending upstream.
+# Version-locked: see sfduo-phosh-install. Droidian 101 is 0.18's.
 PHOSH_ANY=
-carry phosh phosh "$ROOT/out/phosh/phosh-0.49.0-cf38ab5-sfduo" \
-    "0.49.0+git20250824213429.cf38ab5.next.phosh.0.49" && PHOSH_ANY=1
 carry phosh phosh "$ROOT/out/phosh/phosh-0.55.0-bee1861-sfduo" \
     "0.55.0+git20260824233009.bee1861.next.phosh.0.55" && PHOSH_ANY=1
 if [ -n "$PHOSH_ANY" ]; then
@@ -1044,51 +1024,22 @@ if [ -n "$PHOSH_ANY" ]; then
     install -Dm644 "$SHELLDIR/qcom,sm8150-mtp.json" \
         "$PKG/usr/lib/sfduo/phosh/display-panels/qcom,sm8150-mtp.json"
 fi
-# The patched phoc (../shell/phoc-patches/0001-0027): tiled windows stop
-# short of the hinge named by `tiling-seam` in phoc.ini, a new window opens
-# on the panel touched last, a closed one fades away and a minimized one
-# drops to the bottom edge, a bar giving up its reservation gives it up at
-# once, windows can be minimized at all, org.sfduo.Phoc.Tile puts windows on
-# a half directly and sliding, maximized means one panel, and a window too
-# wide for a panel is fitted into it; frame done goes to the clients before
-# the repaint, not after hwcomposer's swap, and a drag down on the dock's
-# catcher over an empty panel pulls that panel's shade, and a window brought
-# back from the dock shows at its first frame; a keyboard on one panel
-# reserves that panel's bottom, a window drawing into subsurfaces of its own
-# (Firefox) slides itself to the other panel, a move to the other panel
-# turns like a page about the hinge (#239), the folded bars' pixels are not
-# taken from windows, a tiled window is tiled on all four edges, and a window
-# scaled to fit a panel reaches 2 px past its edges (no line of wallpaper).
-# Version-locked like phosh: see sfduo-phoc-install. Built per
-# ../shell/README.md.
+# Droidian 102's phoc with ../shell/phoc-patches, built per
+# ../shell/README.md: on an output with a `tiling-seam` (phoc.ini) a window
+# is maximized onto one panel - the one touched last - and never across the
+# hinge, one too wide for a panel is fitted into it, a keyboard on one panel
+# reserves that panel's bottom, the two top bars reserve no pixel of the
+# windows; frame done goes out before the repaint and idle work before GLib
+# sleeps. Version-locked like phosh: see sfduo-phoc-install.
 install -m755 "$SHELLDIR/sfduo-phoc-install" "$PKG/usr/local/sbin/"
-# The same patches on both releases: 102's phoc is 101's source rebuilt.
-# 0.20.1 is built for 102; 101's binary is 0.18's, without 0021-0027.
-carry phoc phoc "$ROOT/out/phoc/phoc-0.47.0-98211ea-sfduo" \
-    "0.47.0-1~git20250520212245.98211ea.next.phosh.0.47" || true
 carry phoc phoc "$ROOT/out/phoc/phoc-0.47.0-7e682c6-sfduo" \
     "0.47.0-1~git20260824230949.7e682c6.next.phosh.0.47" || true
 # The patched on-screen keyboard: on this display it takes the right panel
-# instead of both, with 60 px key rows. phosh-osk-stub on 101
-# (../shell/osk-patches), renamed phosh-osk-stevia on 102
+# instead of both, with 60 px key rows - phosh-osk-stevia on 102
 # (../shell/osk-patches-stevia). Version-locked like the others.
 install -m755 "$SHELLDIR/sfduo-osk-install" "$PKG/usr/local/sbin/"
-carry osk/phosh-osk-stub phosh-osk-stub "$ROOT/out/osk/phosh-osk-stub-0.47.0-43ef51f-sfduo" \
-    "0.47.0+git20250520212740.43ef51f.next.phosh.0.47" || true
 carry osk/phosh-osk-stevia phosh-osk-stevia "$ROOT/out/osk/phosh-osk-stevia-0.55.0-cfcbe7a-sfduo" \
     "0.55.0+git20260824233138.cfcbe7a.next.phosh.0.55" || true
-# The shell and the output scale as two switches (#20): sfduo-shell wraps the
-# three install scripts above and the scale line in phoc.ini; Settings runs
-# it through pkexec, which the policy names.
-install -m755  "$SHELLDIR/sfduo-shell"               "$PKG/usr/local/sbin/"
-install -Dm644 "$SHELLDIR/org.sfduo.shell.policy"    "$PKG/usr/share/polkit-1/actions/org.sfduo.shell.policy"
-install -Dm644 "$SHELLDIR/sfduo-dock.desktop"       "$PKG/etc/xdg/autostart/sfduo-dock.desktop"
-# The system screen (#109): the page left of the left panel, brought by a
-# swipe right on its desktop (the dock catches it). GTK4, a program of its own.
-install -m755  "$SHELLDIR/sfduo-system-screen"         "$PKG/usr/local/bin/"
-install -Dm644 "$SHELLDIR/sfduo-system-screen.desktop" "$PKG/etc/xdg/autostart/sfduo-system-screen.desktop"
-install -m755  "$SHELLDIR/sfduo-pen-screen"            "$PKG/usr/local/bin/"
-install -Dm644 "$SHELLDIR/sfduo-pen-screen.desktop"    "$PKG/etc/xdg/autostart/sfduo-pen-screen.desktop"
 # The hinge, read once and told to everyone: org.sfduo.Posture on the
 # session bus - the smoothed angle, the posture, whether it is moving (#55)
 install -m755  "$SHELLDIR/sfduo-posture"            "$PKG/usr/local/bin/"
@@ -1118,9 +1069,9 @@ install -Dm644 "$SYSTEM/sfduo-keyring-open.service" "$PKG/usr/lib/systemd/user/s
 mkdir -p "$PKG/etc/systemd/user/default.target.wants"
 ln -s /usr/lib/systemd/user/sfduo-keyring-open.service \
     "$PKG/etc/systemd/user/default.target.wants/sfduo-keyring-open.service"
-install -Dm644 "$SHELLDIR/dock.json" "$PKG/usr/share/sfduo/dock.json.example"
 # the port's version, for the system screen's device card (#119): dpkg's
 # status is a 1.6 MB file to look it up in
+mkdir -p "$PKG/usr/share/sfduo"
 echo "$VER" > "$PKG/usr/share/sfduo/version"
 # The output scale (2026-09-18): Droidian's generic phoc.ini says 3, which
 # makes the panels 928x600 logical - a phone's worth of space, in which GNOME
@@ -1290,14 +1241,6 @@ if id droidian >/dev/null 2>&1; then
     else
         echo "sfduo: $H/.config/gtk-3.0/gtk.css is not ours - left alone;" >&2
         echo "sfduo: the shell's CSS is at /usr/share/sfduo/gtk.css" >&2
-    fi
-    # 0.16: "Settings" on the dock is the port's own (org.sfduo.Settings);
-    # GNOME Settings left the grid. A dock config written before keeps the
-    # old one, which would stand beside the new one as a second gear.
-    if [ -f "$H/.config/sfduo/dock.json" ] && \
-       ! grep -q org.sfduo.Settings.desktop "$H/.config/sfduo/dock.json"; then
-        sed -i 's/"org\.gnome\.Settings\.desktop"/"org.sfduo.Settings.desktop"/' \
-            "$H/.config/sfduo/dock.json"
     fi
     # GNOME's first-run wizard wants about 1024 px and a panel of this
     # display is 675: across the hinge, or fitted into a panel and small in

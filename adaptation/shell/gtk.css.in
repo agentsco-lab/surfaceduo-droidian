@@ -72,21 +72,6 @@
 .phosh-far-half #top-bar > label { opacity: 0; }
 .phosh-far-half #top-bar > :last-child { opacity: 1; }
 
-/* One window on one panel (#79, phosh-patches/0011): that half's bar folds
-   away to a handle and the free half's bar says all of it - signal, clock,
-   indicators - so the window has its panel's whole height. The contents
-   cross by fading, out on one half and in on the other; the fold itself is
-   the compositor sliding the surface. The handle left on the taken half is
-   transparent, not a black line over the window's edge. */
-#top-bar > * { transition: opacity 250ms ease-out; }
-.phosh-bar-all #top-bar > :first-child,
-.phosh-bar-all #top-bar > label,
-.phosh-bar-all #top-bar > :last-child { opacity: 1; }
-.phosh-bar-none #top-bar > :first-child,
-.phosh-bar-none #top-bar > label,
-.phosh-bar-none #top-bar > :last-child { opacity: 0; }
-.phosh-bar-none #top-bar-bin { background-color: transparent; }
-
 /* The lock screen gets the same split and nothing special. Taking the bar
    off it entirely was tried first, on the grounds that the screen has a
    clock of its own: it only moved the question, since the halves are uneven
@@ -160,21 +145,6 @@ phosh-lockscreen deck > box > box > label.dim-label { margin-left: @RIGHT@px; }
    moves - the event box behind it still spans the whole width, so the swipe
    still starts anywhere along the bottom edge. */
 #home-bar { margin-left: @RIGHT@px; }
-
-/* ---- the desktop ------------------------------------------------------ */
-
-/* Phosh has no home screen. With nothing running it shows the app grid, and
-   there is no state in which the device shows a wallpaper and nothing else -
-   which is what this device wants, since its launcher is the dock along the
-   bottom. So the grid is pushed past the bottom edge: it is still there, still
-   reachable by search when the margin is removed, but nothing of it is on the
-   screen and nothing of it can be touched. @OFFGRID@ is twice the longer
-   side, more than the screen in either orientation.
-
-   The alternative was to cover the grid with the dock, which worked and cost
-   the notification shade: pulled down, it unfolded underneath the cover and
-   could not be reached. */
-phosh-app-grid { margin-top: @OFFGRID@px; }
 
 /* ---- app grid --------------------------------------------------------- */
 
