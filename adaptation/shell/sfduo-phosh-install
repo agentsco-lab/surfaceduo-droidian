@@ -40,7 +40,13 @@ set -e
 # exact phosh version it was built for (101 and 102 for 0.20); packages
 # before 0.20 had one build with its version in a file beside it.
 HAVE=$(dpkg-query -W -f='${Version}' phosh 2>/dev/null || true)
-if [ -n "$HAVE" ] && [ -f "/usr/lib/sfduo/phosh/$HAVE/phosh" ]; then
+# The two-panel shell (agentsco-lab/item, package item-shell) brings a build
+# of its own - the port's patches and the shell's on top: while it is
+# installed, its build is the one put in place.
+if [ -n "$HAVE" ] && [ -f "/usr/lib/item/phosh/$HAVE/phosh" ]; then
+    OURS=/usr/lib/item/phosh/$HAVE/phosh
+    WANT=$HAVE
+elif [ -n "$HAVE" ] && [ -f "/usr/lib/sfduo/phosh/$HAVE/phosh" ]; then
     OURS=/usr/lib/sfduo/phosh/$HAVE/phosh
     WANT=$HAVE
 else

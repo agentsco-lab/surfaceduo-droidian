@@ -18,6 +18,8 @@ if dpkg-query -W -f='${Status}' phosh-osk-stevia 2>/dev/null | grep -q "ok insta
 fi
 HAVE=$(dpkg-query -W -f='${Version}' "$PKG" 2>/dev/null || true)
 OURS=/usr/lib/sfduo/osk/$PKG/$HAVE/$PKG
+# the two-panel shell's own build (agentsco-lab/item), while it is installed
+[ -f "/usr/lib/item/osk/$PKG/$HAVE/$PKG" ] && OURS=/usr/lib/item/osk/$PKG/$HAVE/$PKG
 WANT=$HAVE
 if [ ! -f "$OURS" ] && [ "$PKG" = phosh-osk-stub ]; then
     # packages before 0.20: one build, its version beside it
