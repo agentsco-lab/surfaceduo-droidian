@@ -20,7 +20,13 @@ set -e
 # exact phoc version it was built for (101 and 102 for 0.20); packages
 # before 0.20 had one build with its version in a file beside it.
 HAVE=$(dpkg-query -W -f='${Version}' phoc 2>/dev/null || true)
-if [ -n "$HAVE" ] && [ -f "/usr/lib/sfduo/phoc/$HAVE/phoc" ]; then
+# The two-panel shell (agentsco-lab/item, package item-shell) brings a build
+# of its own - the port's patches and the shell's on top: while it is
+# installed, its build is the one put in place.
+if [ -n "$HAVE" ] && [ -f "/usr/lib/item/phoc/$HAVE/phoc" ]; then
+    OURS=/usr/lib/item/phoc/$HAVE/phoc
+    WANT=$HAVE
+elif [ -n "$HAVE" ] && [ -f "/usr/lib/sfduo/phoc/$HAVE/phoc" ]; then
     OURS=/usr/lib/sfduo/phoc/$HAVE/phoc
     WANT=$HAVE
 else
