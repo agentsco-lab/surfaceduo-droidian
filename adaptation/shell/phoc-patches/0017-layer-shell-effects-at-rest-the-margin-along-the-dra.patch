@@ -1,0 +1,78 @@
+From 77250afd67a539bd27e1484dd104837a9c21d860 Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 00:10:58 +0300
+Subject: [PATCH 17/18] layer-shell-effects: at rest the margin along the drag
+ is where the surface stands
+
+A client setting a draggable surface's margins sends all four. The shell
+narrowing its home to one panel of a display with a seam sent its own
+stale bottom margin of 0 with the new left and right, and a folded home
+stood up over the windows while phoc still held it folded; a new folded
+margin on a surface at rest was likewise never taken. At rest - neither
+dragged nor sliding - the margin along the drag is put back where the
+surface stands, folded or unfolded.
+---
+ src/layer-shell-effects.c | 40 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 40 insertions(+)
+
+diff --git a/src/layer-shell-effects.c b/src/layer-shell-effects.c
+index b146dc1..d4c2fa4 100644
+--- a/src/layer-shell-effects.c
++++ b/src/layer-shell-effects.c
+@@ -628,6 +628,8 @@ stacked_target_layer_surface_handle_destroy (struct wl_listener *listener, void
+ }
+ 
+ 
++static void apply_margin (PhocDraggableLayerSurface *drag_surface, double margin);
++
+ static void
+ draggable_layer_surface_handle_commit (struct wl_listener *listener, void *data)
+ {
+@@ -691,6 +693,44 @@ draggable_layer_surface_handle_commit (struct wl_listener *listener, void *data)
+     phoc_layer_shell_arrange (phoc_layer_surface_get_output (layer_surface));
+   }
+ 
++  /* At rest the margin along the drag is phoc's: where the surface stands,
++   * folded or unfolded. A client setting its margins sends all four - the
++   * shell narrowing its home to one panel of a display with a seam sent its
++   * own stale 0 along with the new left and right, and a folded home stood
++   * up over the windows while phoc still held it folded. A new folded
++   * height at rest was likewise never taken. Put it back where it stands. */
++  if (drag_surface->state == PHOC_DRAGGABLE_SURFACE_STATE_NONE) {
++    struct wlr_layer_surface_v1 *wlr_layer_surface = layer_surface->layer_surface;
++    int32_t rest, margin;
++
++    rest = drag_surface->drag.last_state == ZPHOC_DRAGGABLE_LAYER_SURFACE_V1_DRAG_END_STATE_UNFOLDED ?
++      drag_surface->current.unfolded : drag_surface->current.folded;
++
++    switch (wlr_layer_surface->current.anchor) {
++    case PHOC_LAYER_SHELL_EFFECT_DRAG_FROM_TOP:
++      margin = wlr_layer_surface->current.margin.top;
++      break;
++    case PHOC_LAYER_SHELL_EFFECT_DRAG_FROM_BOTTOM:
++      margin = wlr_layer_surface->current.margin.bottom;
++      break;
++    case PHOC_LAYER_SHELL_EFFECT_DRAG_FROM_LEFT:
++      margin = wlr_layer_surface->current.margin.left;
++      break;
++    case PHOC_LAYER_SHELL_EFFECT_DRAG_FROM_RIGHT:
++      margin = wlr_layer_surface->current.margin.right;
++      break;
++    default:
++      margin = rest;
++      break;
++    }
++
++    if (margin != rest) {
++      g_debug ("Draggable %p back at rest margin %d (was %d)", drag_surface, rest, margin);
++      apply_margin (drag_surface, rest);
++      phoc_layer_shell_arrange (phoc_layer_surface_get_output (layer_surface));
++    }
++  }
++
+   /* TODO: cancel related gestures on drag mode changes */
+ 
+   /* Keep in sync with layer surface geometry changes */
+-- 
+2.43.0
+

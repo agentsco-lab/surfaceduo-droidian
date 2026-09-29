@@ -1,0 +1,82 @@
+From 55950749350932750971ff3eb7d3120b16057a1b Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 00:10:58 +0300
+Subject: [PATCH 16/18] phosh-private: a thumbnail is offered as ARGB8888, the
+ format it is read as
+
+The format was asked of GL when the first thumbnail was requested - from
+the Wayland dispatch, outside any GL context, where glGetString answers
+NULL - so ABGR8888 it was, for good. The view is read into the buffer as
+ARGB8888 whatever is offered, and a renderer whose wl_shm has no
+ABGR8888 (Adreno under libhybris) refused the shell's buffer as
+"Unsupported format": the protocol error took the shell down, and with
+it every app, whenever the overview asked for a card's picture.
+---
+ src/phosh-private.c | 23 ++++++-----------------
+ 1 file changed, 6 insertions(+), 17 deletions(-)
+
+diff --git a/src/phosh-private.c b/src/phosh-private.c
+index 8a6cea3..42d2a1a 100644
+--- a/src/phosh-private.c
++++ b/src/phosh-private.c
+@@ -24,8 +24,6 @@
+ #include "render.h"
+ #include "utils.h"
+ 
+-#include <GLES2/gl2.h>
+-#include <GLES2/gl2ext.h>
+ 
+ #include <drm_fourcc.h>
+ 
+@@ -491,16 +489,6 @@ static const struct zwlr_screencopy_frame_v1_interface phoc_phosh_private_screen
+   .copy_with_damage = thumbnail_frame_handle_copy_with_damage,
+ };
+ 
+-static uint32_t
+-get_preferred_read_format (void)
+-{
+-  const char *exts_str = (const char *)glGetString(GL_EXTENSIONS);
+-  if (exts_str != NULL && strstr(exts_str, "GL_EXT_read_format_bgra"))
+-    return DRM_FORMAT_ARGB8888;
+-
+-  return DRM_FORMAT_ABGR8888;
+-}
+-
+ static void
+ handle_get_thumbnail (struct wl_client *client,
+                       struct wl_resource *phosh_private_resource,
+@@ -509,7 +497,6 @@ handle_get_thumbnail (struct wl_client *client,
+                       uint32_t max_width,
+                       uint32_t max_height)
+ {
+-  static uint32_t preferred_read_format = 0;
+   PhocPhoshPrivateScreencopyFrame *frame = g_new0 (PhocPhoshPrivateScreencopyFrame, 1);
+ 
+   if (frame == NULL) {
+@@ -517,9 +504,6 @@ handle_get_thumbnail (struct wl_client *client,
+     return;
+   }
+ 
+-  if (!preferred_read_format)
+-    preferred_read_format = get_preferred_read_format();
+-
+   int version = wl_resource_get_version (phosh_private_resource);
+   frame->resource = wl_resource_create (client, &zwlr_screencopy_frame_v1_interface, version, id);
+   if (frame->resource == NULL) {
+@@ -558,7 +542,12 @@ handle_get_thumbnail (struct wl_client *client,
+   struct wlr_box box;
+   phoc_view_get_box (view, &box);
+ 
+-  frame->format = preferred_read_format;
++  /* What phoc_renderer_render_view_to_buffer reads the view as, and what
++   * every wl_shm has. It was asked of GL here - outside any GL context,
++   * where glGetString answers NULL, so ABGR8888 it was, for good; a renderer
++   * without that shm format (Adreno under libhybris) refused the shell's
++   * buffer as "Unsupported format" and dropped the shell with it. */
++  frame->format = WL_SHM_FORMAT_ARGB8888;
+   frame->width = box.width * view->wlr_surface->current.scale;
+   frame->height = box.height * view->wlr_surface->current.scale;
+ 
+-- 
+2.43.0
+

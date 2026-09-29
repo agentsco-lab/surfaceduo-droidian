@@ -66,11 +66,15 @@ def numbers(scale):
     # the app grid: six columns, never seven (an odd count straddles the hinge)
     row = w - GRID_SPACING
     child = (row - 5 * GRID_SPACING) // 6 - 4
+    # the same grid on one panel, as the desktop beside a window: three columns
+    panel_row = left - GRID_SPACING
+    panel_child = (panel_row - 2 * GRID_SPACING) // 3 - 4
     return {
         "SCALE": f"{scale:g}", "W": w, "H": h,
         "LEFT": left, "RIGHT": right, "HINGE": hinge,
         "OFFGRID": 2 * max(w, h),
         "GRIDROW": row, "GRIDCHILD": child, "GRIDMIN": child - 2 * GRID_PAD,
+        "PANELGRIDMIN": panel_child - 2 * GRID_PAD,
     }
 
 
