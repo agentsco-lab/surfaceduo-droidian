@@ -18,6 +18,7 @@ restart the shell.
 """
 import argparse
 import configparser
+import glob
 import os
 import re
 import sys
@@ -29,6 +30,10 @@ GRID_SPACING = 6          # phosh's column spacing
 
 TEMPLATE = "/usr/share/sfduo/gtk.css.in"
 OUTPUT = "/usr/share/sfduo/gtk.css"
+# The two-panel shell (agentsco-lab/item) adds rules of its own - hiding
+# phosh's grid behind the dock, the bar moving to the free panel: templates
+# in this directory, filled in the same way and appended after the port's.
+EXTRA = "/usr/share/item/css"
 # `sfduo-shell --stock` (and `sfduo-phosh-install --restore`) leave this: the
 # packaged phosh has no seam to keep its furniture off, and the margins made
 # for the port's phosh only push its own about. The user's gtk.css stays a
@@ -94,6 +99,10 @@ def main(argv):
         return
     with open(args.template) as fp:
         text = fp.read()
+    extra = sorted(glob.glob(os.path.join(EXTRA, "*.css.in")))
+    for path in extra:
+        with open(path) as fp:
+            text += f"\n/* ---- {path} ---- */\n" + fp.read()
     missing = set()
 
     def fill(match):
@@ -109,7 +118,8 @@ def main(argv):
     with open(args.output, "w") as fp:
         fp.write(out)
     print(f"sfduo-shell-css: {args.output} for scale {scale:g} ({where}): "
-          f"{values['W']}x{values['H']}, hinge [{values['LEFT']}, {values['RIGHT']}]")
+          f"{values['W']}x{values['H']}, hinge [{values['LEFT']}, {values['RIGHT']}]"
+          + (f", with {len(extra)} of the shell's" if extra else ""))
 
 
 if __name__ == "__main__":
