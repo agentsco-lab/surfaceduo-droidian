@@ -1,3 +1,12 @@
+From 60f7db2e5f8e56743b9bf9fa34e0d7f549502ad0 Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
+Date: Thu, 24 Sep 2026 22:27:21 +0300
+Subject: [PATCH 01/10] screen-saver: tell logind the shell came up locked
+
+---
+ src/screen-saver-manager.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
 diff --git a/src/screen-saver-manager.c b/src/screen-saver-manager.c
 index 9f9439f1..a7aed65a 100644
 --- a/src/screen-saver-manager.c
@@ -28,3 +37,6 @@ index 9f9439f1..a7aed65a 100644
  }
  
  
+-- 
+2.43.0
+

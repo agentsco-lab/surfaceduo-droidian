@@ -1,0 +1,143 @@
+From 2481994f5cc95219b2d18b2bbba8ba4eb709f335 Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
+Date: Tue, 29 Sep 2026 09:20:33 +0300
+Subject: [PATCH 10/10] splash: on a display with a seam, on the panel the app
+ was launched from
+
+The splash covered the whole output, cut in two by the hinge, while the
+app came up on one panel. The app grid now says where the launcher it
+started an app from is, and the splash covers that panel alone. A launch
+from anywhere else keeps the whole output.
+---
+ src/app-grid-button.c | 10 ++++++++++
+ src/shell-priv.h      |  2 ++
+ src/shell.c           | 34 ++++++++++++++++++++++++++++++++++
+ src/splash.c          | 19 +++++++++++++++++++
+ 4 files changed, 65 insertions(+)
+
+diff --git a/src/app-grid-button.c b/src/app-grid-button.c
+index 9c9ced2f..cb192a44 100644
+--- a/src/app-grid-button.c
++++ b/src/app-grid-button.c
+@@ -210,6 +210,16 @@ activate_cb (PhoshAppGridButton *self)
+ 
+   g_return_if_fail (PHOSH_IS_APP_TRACKER (app_tracker));
+ 
++  /* where on the output the launcher is, for the splash (splash.c) */
++  {
++    GtkWidget *top = gtk_widget_get_toplevel (GTK_WIDGET (self));
++    int x, y;
++
++    if (gtk_widget_translate_coordinates (GTK_WIDGET (self), top,
++                                          gtk_widget_get_allocated_width (GTK_WIDGET (self)) / 2,
++                                          0, &x, &y))
++      phosh_shell_set_launch_x (phosh_shell_get_default (), x);
++  }
+   phosh_app_tracker_launch_app_info (app_tracker, priv->info);
+   g_signal_emit (self, signals[APP_LAUNCHED], 0, priv->info);
+ }
+diff --git a/src/shell-priv.h b/src/shell-priv.h
+index b62282f1..ebc3af95 100644
+--- a/src/shell-priv.h
++++ b/src/shell-priv.h
+@@ -93,6 +93,8 @@ PhoshCallsManager      *phosh_shell_get_calls_manager (PhoshShell *self);
+ PhoshFeedbackManager   *phosh_shell_get_feedback_manager   (PhoshShell *self);
+ PhoshGtkMountManager   *phosh_shell_get_gtk_mount_manager  (PhoshShell *self);
+ PhoshLayoutManager     *phosh_shell_get_layout_manager     (PhoshShell *self);
++void                    phosh_shell_set_launch_x           (PhoshShell *self, int x);
++int                     phosh_shell_take_launch_x          (PhoshShell *self);
+ PhoshModeManager       *phosh_shell_get_mode_manager       (PhoshShell *self);
+ PhoshSplashManager *    phosh_shell_get_splash_manager     (PhoshShell *self);
+ PhoshStyleManager      *phosh_shell_get_style_manager      (PhoshShell *self);
+diff --git a/src/shell.c b/src/shell.c
+index a231089d..0dfa8a94 100644
+--- a/src/shell.c
++++ b/src/shell.c
+@@ -148,6 +148,8 @@ typedef struct {
+    * two are independent: each folds, unfolds and drags on its own, so
+    * each half of the device has its own shade. NULL otherwise. */
+   PhoshDragSurface           *top_panel_right;
++  /* where on the output an app was last launched from, or -1 (splash.c) */
++  int                         launch_x;
+   PhoshDragSurface           *home;
+   gboolean                    overview_visible;
+   GPtrArray                  *faders; /* for final fade out */
+@@ -1557,6 +1559,7 @@ phosh_shell_init (PhoshShell *self)
+   const char *messages_debug;
+   PhoshShellPrivate *priv = phosh_shell_get_instance_private (self);
+ 
++  priv->launch_x = -1;
+   messages_debug = g_getenv ("G_MESSAGES_DEBUG");
+   if (messages_debug)
+     priv->log_domains = g_strsplit (messages_debug, " ", -1);
+@@ -1896,6 +1899,37 @@ phosh_shell_get_launcher_entry_manager (PhoshShell *self)
+  *
+  * Returns: (transfer none): The layout manager
+  */
++/**
++ * phosh_shell_set_launch_x:
++ * @x: where on the output the launcher that was just tapped is
++ *
++ * The app grid says where an app is launched from, so that its splash can
++ * come up on that panel of a display with a seam.
++ */
++void
++phosh_shell_set_launch_x (PhoshShell *self, int x)
++{
++  PhoshShellPrivate *priv = phosh_shell_get_instance_private (self);
++
++  priv->launch_x = x;
++}
++
++/**
++ * phosh_shell_take_launch_x:
++ *
++ * Returns: where the last launch came from, once, or -1
++ */
++int
++phosh_shell_take_launch_x (PhoshShell *self)
++{
++  PhoshShellPrivate *priv = phosh_shell_get_instance_private (self);
++  int x = priv->launch_x;
++
++  priv->launch_x = -1;
++  return x;
++}
++
++
+ PhoshLayoutManager *
+ phosh_shell_get_layout_manager (PhoshShell *self)
+ {
+diff --git a/src/splash.c b/src/splash.c
+index 1df7c6f8..380d7001 100644
+--- a/src/splash.c
++++ b/src/splash.c
+@@ -161,6 +161,25 @@ phosh_splash_constructed (GObject *object)
+                 "namespace", "phosh splash",
+                 NULL);
+ 
++  /* On a display with a seam the splash covered both panels, cut by the
++   * hinge, while the app comes up on one: it covers the panel the app was
++   * launched from, if the launch came from the grid. */
++  {
++    PhoshShell *shell = phosh_shell_get_default ();
++    int x = phosh_shell_take_launch_x (shell);
++    GdkRectangle seam;
++
++    if (x >= 0 && monitor &&
++        phosh_layout_manager_get_seam (phosh_shell_get_layout_manager (shell), &seam)) {
++      if (x < seam.x + seam.width / 2)
++        phosh_layer_surface_set_margins (PHOSH_LAYER_SURFACE (self), 0,
++                                         monitor->logical.width - seam.x, 0, 0);
++      else
++        phosh_layer_surface_set_margins (PHOSH_LAYER_SURFACE (self), 0, 0, 0,
++                                         seam.x + seam.width);
++    }
++  }
++
+   G_OBJECT_CLASS (phosh_splash_parent_class)->constructed (object);
+ }
+ 
+-- 
+2.43.0
+

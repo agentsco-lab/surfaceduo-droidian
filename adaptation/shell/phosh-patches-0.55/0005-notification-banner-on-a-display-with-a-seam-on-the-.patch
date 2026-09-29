@@ -1,3 +1,13 @@
+From 145ffb805a9f9110590e497b2347c8efff278858 Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
+Date: Thu, 24 Sep 2026 22:27:22 +0300
+Subject: [PATCH 05/10] notification-banner: on a display with a seam, on the
+ far half
+
+---
+ src/notifications/notification-banner.c | 37 ++++++++++++++++++++-----
+ 1 file changed, 30 insertions(+), 7 deletions(-)
+
 diff --git a/src/notifications/notification-banner.c b/src/notifications/notification-banner.c
 index ce7a9a52..ef5b5829 100644
 --- a/src/notifications/notification-banner.c
@@ -81,3 +91,6 @@ index ce7a9a52..ef5b5829 100644
  }
  
  /**
+-- 
+2.43.0
+

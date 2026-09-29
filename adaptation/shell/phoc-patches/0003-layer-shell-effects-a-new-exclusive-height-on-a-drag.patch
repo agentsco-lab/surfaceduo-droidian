@@ -1,7 +1,7 @@
-From 534ae4e4707deae4da34bde82eb8a57b52920a82 Mon Sep 17 00:00:00 2001
+From 38a01e78a4a4ce1723c9746d37279548eda60bca Mon Sep 17 00:00:00 2001
 From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Sat, 19 Sep 2026 21:55:30 +0300
-Subject: [PATCH 4/4] layer-shell-effects: a new exclusive height on a
+Subject: [PATCH 03/13] layer-shell-effects: a new exclusive height on a
  draggable surface takes effect at once
 
 The zone of a draggable layer surface was worked out from its exclusive

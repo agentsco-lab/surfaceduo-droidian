@@ -1,8 +1,8 @@
-From 1869161908062e1b10189b2ac34bd3a407c0f27a Mon Sep 17 00:00:00 2001
+From d627c89f07cc432f1fdbc3d806dbc15d37b7b0d2 Mon Sep 17 00:00:00 2001
 From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 16:07:27 +0300
-Subject: [PATCH] background-cache: one wallpaper, only as large as an output
- needs
+Subject: [PATCH 07/10] background-cache: one wallpaper, only as large as an
+ output needs
 
 A wallpaper was decoded at its own size and kept for as long as phosh ran:
 GNOME's 4096x4096 ones are 64 MB each. And kept twice - the background and

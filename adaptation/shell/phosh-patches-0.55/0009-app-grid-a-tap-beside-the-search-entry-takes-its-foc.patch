@@ -1,0 +1,87 @@
+From be59b94e067b2485373a7912a3b3449f68461a0b Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
+Date: Tue, 29 Sep 2026 00:10:27 +0300
+Subject: [PATCH 09/10] app-grid: a tap beside the search entry takes its focus
+ away
+
+Once the search entry had the focus nothing took it away again: a tap on
+the grid beside it left it focused and the keyboard asked for, and a swipe
+down on the keyboard hid the keyboard but not the focus. A tap anywhere on
+the grid other than the entry now drops the focus, and the keyboard goes
+with it; the tap still does what it did - a launcher it lands on starts its
+app.
+---
+ src/app-grid.c | 36 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 36 insertions(+)
+
+diff --git a/src/app-grid.c b/src/app-grid.c
+index cc2fe6fb..6a4b8769 100644
+--- a/src/app-grid.c
++++ b/src/app-grid.c
+@@ -72,6 +72,7 @@ struct _PhoshAppGridPrivate {
+   GSimpleActionGroup *actions;
+   PhoshAppFilterModeFlags filter_mode;
+   guint debounce;
++  GtkGesture *unfocus;   /* a tap beside the search entry takes its focus away */
+ };
+ 
+ G_DEFINE_TYPE_WITH_PRIVATE (PhoshAppGrid, phosh_app_grid, GTK_TYPE_BOX)
+@@ -419,6 +420,33 @@ create_launcher (gpointer item, gpointer self)
+ }
+ 
+ 
++/* Once the search entry had the focus nothing took it away again: a tap on
++ * the grid beside it left it focused, its text selected and the keyboard
++ * asked for, and a swipe down on the keyboard hid the keyboard but not that.
++ * A tap anywhere on the grid other than the entry now drops the focus - the
++ * keyboard goes with it - and still does whatever it did (a launcher it
++ * lands on starts its app). */
++static void
++on_unfocus_pressed (PhoshAppGrid *self, int n_press, double x, double y)
++{
++  PhoshAppGridPrivate *priv = phosh_app_grid_get_instance_private (self);
++  GtkWidget *toplevel;
++  int ex, ey;
++
++  if (!gtk_widget_has_focus (priv->search))
++    return;
++  if (gtk_widget_translate_coordinates (GTK_WIDGET (self), priv->search, x, y, &ex, &ey) &&
++      ex >= 0 && ey >= 0 &&
++      ex < gtk_widget_get_allocated_width (priv->search) &&
++      ey < gtk_widget_get_allocated_height (priv->search))
++    return;
++
++  toplevel = gtk_widget_get_toplevel (GTK_WIDGET (self));
++  if (GTK_IS_WINDOW (toplevel))
++    gtk_window_set_focus (GTK_WINDOW (toplevel), NULL);
++}
++
++
+ static void
+ phosh_app_grid_init (PhoshAppGrid *self)
+ {
+@@ -429,6 +457,13 @@ phosh_app_grid_init (PhoshAppGrid *self)
+ 
+   gtk_widget_init_template (GTK_WIDGET (self));
+ 
++  /* seen first, in the capture phase, and never claimed: the tap goes on
++   * to whatever it landed on */
++  priv->unfocus = gtk_gesture_multi_press_new (GTK_WIDGET (self));
++  gtk_event_controller_set_propagation_phase (GTK_EVENT_CONTROLLER (priv->unfocus),
++                                              GTK_PHASE_CAPTURE);
++  g_signal_connect_swapped (priv->unfocus, "pressed", G_CALLBACK (on_unfocus_pressed), self);
++
+   favorites = phosh_favorite_list_model_get_default ();
+ 
+   gtk_flow_box_bind_model (GTK_FLOW_BOX (priv->favs),
+@@ -484,6 +519,7 @@ phosh_app_grid_dispose (GObject *object)
+   g_clear_object (&priv->model);
+   g_clear_object (&priv->settings);
+   g_clear_handle_id (&priv->debounce, g_source_remove);
++  g_clear_object (&priv->unfocus);
+ 
+   G_OBJECT_CLASS (phosh_app_grid_parent_class)->dispose (object);
+ }
+-- 
+2.43.0
+

@@ -1,7 +1,8 @@
-From f3972b8f2967115db117597f7802ce07f7845d9a Mon Sep 17 00:00:00 2001
+From 780b46858cf42a95f5b50872baf5f4e0150e1b61 Mon Sep 17 00:00:00 2001
 From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 18:50:56 +0300
-Subject: [PATCH] view: a window scaled to fit a panel reaches past its edges
+Subject: [PATCH 11/13] view: a window scaled to fit a panel reaches past its
+ edges
 
 A window wider than a panel - GNOME Contacts' first window wants 800 of
 the panel's 675 - is scaled to fit it (view_update_scale). Made exactly
@@ -25,7 +26,7 @@ covered; Calculator still 675x900.
  1 file changed, 71 insertions(+), 26 deletions(-)
 
 diff --git a/src/view.c b/src/view.c
-index 4dee97d..54bd6a1 100644
+index 1a09212..aaeeb41 100644
 --- a/src/view.c
 +++ b/src/view.c
 @@ -5,6 +5,7 @@
@@ -36,7 +37,7 @@ index 4dee97d..54bd6a1 100644
  #include <stdlib.h>
  #include <string.h>
  #include <wlr/types/wlr_subcompositor.h>
-@@ -770,18 +771,27 @@ view_arrange_maximized (PhocView *self, PhocOutput *output)
+@@ -750,18 +751,27 @@ view_arrange_maximized (PhocView *self, PhocOutput *output)
   *
   * Returns: %TRUE if the box can be maximized, otherwise %FALSE.
   */
@@ -71,7 +72,7 @@ index 4dee97d..54bd6a1 100644
  
    if (phoc_view_is_fullscreen (self))
      return FALSE;
-@@ -796,7 +806,7 @@ phoc_view_get_tiled_box (PhocView               *self,
+@@ -776,7 +786,7 @@ phoc_view_get_tiled_box (PhocView               *self,
    wlr_output_layout_get_box (desktop->layout, output->wlr_output, &output_box);
    struct wlr_box usable_area = output->usable_area;
    PhocOutputConfig *oc;
@@ -80,7 +81,7 @@ index 4dee97d..54bd6a1 100644
  
    usable_area.x += output_box.x;
    usable_area.y += output_box.y;
-@@ -829,13 +839,42 @@ phoc_view_get_tiled_box (PhocView               *self,
+@@ -809,13 +819,42 @@ phoc_view_get_tiled_box (PhocView               *self,
      g_error ("Invalid tiling direction %d", dir);
    }
  
@@ -128,7 +129,7 @@ index 4dee97d..54bd6a1 100644
  
    return TRUE;
  }
-@@ -1319,18 +1358,22 @@ view_place_fitted (PhocView *self, const struct wlr_box *box)
+@@ -1297,18 +1336,22 @@ view_place_fitted (PhocView *self, const struct wlr_box *box)
      return FALSE;
  
    phoc_view_get_geometry (self, &geom);
@@ -160,7 +161,7 @@ index 4dee97d..54bd6a1 100644
    return TRUE;
  }
  
-@@ -1386,12 +1429,14 @@ view_update_scale (PhocView *view)
+@@ -1364,12 +1407,14 @@ view_update_scale (PhocView *view)
     * fit, as scale-to-fit does for a window larger than the output. */
    gboolean fit_tile = (phoc_view_is_tiled (view) ||
                         (phoc_view_is_maximized (view) && view_seam_side (view, output, &side))) &&
