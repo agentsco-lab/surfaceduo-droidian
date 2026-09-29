@@ -171,6 +171,24 @@ phosh-app-grid-folder-button {
   padding-right: 18px;
 }
 
+/* With a window on one panel home stands on the other as its desktop
+   (phosh-patches-0.55/0011), narrowed to that panel: three columns there,
+   by the same arithmetic against the panel's own row. */
+phosh-home.p-one-panel phosh-app-grid-button,
+phosh-home.p-one-panel phosh-app-grid-folder-button {
+  min-width: @PANELGRIDMIN@px;
+}
+
+/* ...and there is nothing to move onto the right panel: the search field and
+   the home bar's handle centre in the panel home stands on. Left at
+   @RIGHT@px they held home @RIGHT@px + their own width wide, and GTK would
+   not narrow the window below that - home reached across the hinge. */
+phosh-home.p-one-panel #home-bar,
+phosh-home.p-one-panel .phosh-search-bar,
+phosh-home.p-one-panel #phosh-filter-adaptive-btn {
+  margin-left: 0;
+}
+
 /* The top bar is never see-through. phosh makes it transparent whenever no
    window is maximized - over a wallpaper that is the point, over this black
    one it changes nothing - but a new window maps at the very top of the

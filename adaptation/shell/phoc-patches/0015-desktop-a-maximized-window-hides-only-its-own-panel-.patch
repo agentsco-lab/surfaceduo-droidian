@@ -1,0 +1,65 @@
+From e88f138dbe68d426db1bb3ab00b8b6e4723bb108 Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
+Date: Tue, 29 Sep 2026 13:55:05 +0300
+Subject: [PATCH] desktop: a maximized window hides only its own panel on an
+ output with a seam
+
+In auto-maximize mode phoc draws no view under a maximized one, which on a
+phone is the whole output. On an output made of two panels maximized means
+one panel, so a window on the other panel was hidden for nothing - two apps
+open, one on each panel, showed one app and the wallpaper beside it. There a
+maximized view hides only the views it overlaps; a dialog is never hidden by
+its own parent.
+---
+ src/desktop.c | 35 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/src/desktop.c b/src/desktop.c
+index 708772c..6752668 100644
+--- a/src/desktop.c
++++ b/src/desktop.c
+@@ -356,6 +356,41 @@ phoc_desktop_view_check_visibility (PhocDesktop *self, PhocView *view)
+   if (!self->maximize)
+     goto out;
+ 
++  /* On an output made of two panels maximized means one panel (view.c), so
++   * a maximized window hides only what is under it on its own panel: the
++   * window on the other panel stays in sight beside it. */
++  PhocOutputConfig *oc = phoc_config_get_output (phoc_server_get_config (phoc_server_get_default ()),
++                                                 output);
++  if (oc && oc->seam > 0 && output->usable_area.width > output->usable_area.height) {
++    struct wlr_box view_box;
++
++    phoc_view_get_box (view, &view_box);
++    for (GList *l = priv->views->head; l; l = l->next) {
++      PhocView *v = PHOC_VIEW (l->data);
++      struct wlr_box v_box, overlap;
++      gboolean ancestor = FALSE;
++
++      if (v == view)
++        goto out;
++
++      if (!phoc_view_is_mapped (v) || !phoc_view_is_maximized (v))
++        continue;
++
++      /* a dialog's own parent does not hide it */
++      for (PhocView *p = view->parent; p; p = p->parent)
++        ancestor |= (p == v);
++      if (ancestor)
++        continue;
++
++      phoc_view_get_box (v, &v_box);
++      if (wlr_box_intersection (&overlap, &v_box, &view_box)) {
++        visible = FALSE;
++        goto out;
++      }
++    }
++    goto out;
++  }
++
+   top_view = phoc_desktop_get_view_by_index (self, 0);
+   /* XWayland parent relations can be complicated and aren't described by PhocView
+    * relationships very well at the moment, so just make all XWayland windows visible
+-- 
+2.43.0
+

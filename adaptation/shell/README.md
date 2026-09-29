@@ -155,6 +155,16 @@ installed only beside that version (see "Installing" below). On Droidian 102:
 - 0012 a window maximized before it is mapped goes to the panel touched last
 - 0013, 0014 the pixel a folded bar keeps on its panel is not taken from
   windows
+- 0015 a maximized window hides only what is under it on its own panel, so
+  a window on each panel shows both
+- 0016 a thumbnail is offered as ARGB8888, the format it is read as: asked
+  of GL outside any context it was ABGR8888, which wl_shm here does not
+  have, and the shell was dropped whenever the overview wanted a card's
+  picture
+- 0017 at rest the margin along a drag is where the surface stands, folded
+  or unfolded, whatever margins the client sends with its others
+- 0018 the panels windows stand on are said to the shell (phosh_private
+  version 8, `panels_taken`)
 
 **phosh** (`phosh-patches-0.55/`, on droidian/phosh `group/next/phosh-0.55`,
 bee1861):
@@ -170,12 +180,41 @@ bee1861):
 - 0008 the volume bubble on the right panel
 - 0009 a tap beside the app grid's search entry takes its focus away
 - 0010 the launch splash on the panel the app was launched from
+- 0011 the launch position is on the output, wherever the grid's window
+  starts
+- 0012 the free panel beside a window is a desktop - see below
 
 **The keyboard** (`osk-patches-stevia/`, on droidian's phosh-osk-stevia
 `group/next/phosh-0.55`, cfcbe7a): see below.
 
 `phosh-patches/` and `osk-patches/` are the sets for Droidian 101 (phosh
 0.49, phosh-osk-stub), kept for reference; 0.21 builds for 102 only.
+
+## A desktop on the free panel
+
+Maximized means one panel here, so a window on one panel left the other
+standing empty - only the wallpaper, and no way to start a second app
+beside the first. phoc now says which panels windows stand on
+(phoc-patches/0018), and with one taken, phosh's home - the app grid -
+unfolds on the other as that panel's desktop (phosh-patches-0.55/0012):
+three columns, narrowed by its margins, its wallpaper with it, without the
+keyboard, which stays with the window, and without the running cards.
+Started from it, an app opens on that panel and home folds to its bar
+across the display; close one of two windows and the freed panel gets its
+desktop back.
+
+It moves at the tap. With nothing open, the panel tapped is the one the
+window will come up on, so home fades out, takes the other panel and
+fades back in while the splash shows on the tapped one - about 0.15 s from
+the tap to the final layout, and nothing moves when the window arrives.
+
+The overview - to switch to a window or close one - is a handle along the
+bottom of the window's panel: pulled up, it brings the overview across
+the display, cards and all, as the home bar does anywhere; a card chosen,
+or the overview left, puts the desktop back beside the window.
+
+The two-panel shell (item-shell) hides phosh's home, and none of this
+applies there.
 
 ## The output scale
 

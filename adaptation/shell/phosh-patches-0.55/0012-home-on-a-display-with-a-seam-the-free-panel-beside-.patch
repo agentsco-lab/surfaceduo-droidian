@@ -1,0 +1,838 @@
+From d700f0013be2f444ebed2b517a60e0f7cbef56dc Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 00:11:13 +0300
+Subject: [PATCH 12/12] home: on a display with a seam, the free panel beside a
+ window is a desktop
+
+With a window on one panel of a display with a seam the other panel stood
+empty: only the wallpaper, and no way to start a second app beside the
+first. phoc says which panels windows stand on (phosh_private version 8,
+panels_taken); with one taken, home unfolds on the other alone as that
+panel's desktop - the app grid in three columns, narrowed by its margins,
+its wallpaper with it, without the keyboard, which stays with the window,
+and without the running cards, which are for the overview.
+
+It moves at the tap: an app started from the grid with nothing open takes
+the panel tapped, so home fades out, takes the other panel and fades back
+in while the splash shows on the tapped one, and the window finds its
+place ready; no fold and unfold to watch, no card of a starting app
+pushing the grid down. With both panels taken home folds to its bar
+across the display; a panel freed gets its desktop again. Nothing changes
+under a fold in flight. A handle along the bottom of the window's panel
+pulls the overview up across the display, cards and all, to switch to or
+close a window; choosing, leaving or folding puts the desktop back.
+---
+ protocol/phosh-private.xml |  12 +-
+ src/home.c                 | 541 ++++++++++++++++++++++++++++++++++++-
+ src/home.h                 |   1 +
+ src/overview.c             |  30 +-
+ src/overview.h             |   1 +
+ src/phosh-wayland.c        |   2 +-
+ src/shell-priv.h           |   1 +
+ src/shell.c                |  28 +-
+ 8 files changed, 611 insertions(+), 5 deletions(-)
+
+diff --git a/protocol/phosh-private.xml b/protocol/phosh-private.xml
+index e64e0b7e..52307c98 100644
+--- a/protocol/phosh-private.xml
++++ b/protocol/phosh-private.xml
+@@ -1,5 +1,5 @@
+ <protocol name="phosh">
+-  <interface name="phosh_private" version="7">
++  <interface name="phosh_private" version="8">
+     <description summary="Phone shell extensions">
+       Private protocol between phosh and the compositor.
+     </description>
+@@ -70,6 +70,16 @@
+       <arg name="state" type="uint" enum="shell_state" summary="Status"/>
+     </request>
+ 
++    <event name="panels_taken" since="8">
++      <description summary="Which panels of a display with a seam windows stand on">
++        On an output made of two panels - a tiling seam down its middle -
++        the panels windows stand on: bit 0 the panel left of the seam,
++        bit 1 the one right of it. Sent once on bind and again whenever it
++        changes.
++      </description>
++      <arg name="panels" type="uint" summary="the panels taken, as a bitmask"/>
++    </event>
++
+   </interface>
+ 
+   <interface name="phosh_private_keyboard_event" version="7">
+diff --git a/src/home.c b/src/home.c
+index ce199973..5464f1b8 100644
+--- a/src/home.c
++++ b/src/home.c
+@@ -15,7 +15,9 @@
+ #include "home.h"
+ #include "shell-priv.h"
+ #include "phosh-enums.h"
++#include "animation.h"
+ #include "osk-manager.h"
++#include "phosh-wayland.h"
+ #include "style-manager.h"
+ #include "feedback-manager.h"
+ #include "util.h"
+@@ -82,9 +84,34 @@ struct _PhoshHome
+   PhoshMonitor    *monitor;
+   PhoshBackground *background;
+   gboolean         use_background;
++
++  /* On a display with a seam: the panels windows stand on (phoc says), and
++   * whether home stands on the free one of them as its desktop. */
++  guint            panels_taken;
++  gboolean         desktop_wanted;
++  gboolean         on_one_panel;
++  gboolean         follows_panels;
++  guint            fade_in_id;
++  PhoshAnimation  *fade_in;
++  PhoshAnimation  *fade_out;
++  gboolean         reflow_ready;
++  gboolean         anim_stopping;
++  /* the panel an app was just started on, before its window is there */
++  guint            expected_panel;
++  guint            expected_id;
++  /* a fold or unfold asked of the compositor and not finished yet */
++  gboolean         animating;
++  PhoshDragSurfaceState animation_target;
++  guint            animating_id;
++  /* the window's panel: a handle to pull the overview up by */
++  GtkWidget       *handle;
++  GtkGesture      *handle_drag;
++  gboolean         overview_forced;
+ };
+ G_DEFINE_TYPE(PhoshHome, phosh_home, PHOSH_TYPE_DRAG_SURFACE);
+ 
++static void phosh_home_set_background_alpha (PhoshHome *self, double alpha);
++
+ 
+ static void
+ phosh_home_update_home_bar (PhoshHome *self)
+@@ -102,6 +129,467 @@ phosh_home_update_home_bar (PhoshHome *self)
+ }
+ 
+ 
++/*
++ * On a display with a seam, a window on one panel left the other standing
++ * empty - only the wallpaper, and no way to start a second app beside the
++ * first. There home unfolds on the free panel alone, as that panel's
++ * desktop: the app grid, as with nothing open, narrowed to the panel by its
++ * margins. An app started from it opens on that panel (phoc: the panel
++ * touched last), and with both panels taken home folds to its bar across
++ * the display again. It does not take the keyboard there - the window
++ * beside it keeps it - and the wallpaper behind it narrows with it, since
++ * across the display it would cover that window.
++ */
++#define PHOSH_HOME_FADE_OUT_MS     90
++#define PHOSH_HOME_REFLOW_HOLD_MS  70
++#define PHOSH_HOME_FADE_IN_MS     180
++
++static void phosh_home_sync_panels (PhoshHome *self);
++
++
++/* stopped from here, an animation's done callback has nothing to do */
++static void
++phosh_home_stop_animation (PhoshHome *self, PhoshAnimation **animation)
++{
++  if (*animation) {
++    self->anim_stopping = TRUE;
++    phosh_animation_stop (*animation);
++    self->anim_stopping = FALSE;
++  }
++  g_clear_pointer (animation, phosh_animation_unref);
++}
++
++static void
++fade_in_value_cb (double value, PhoshHome *self)
++{
++  phosh_layer_surface_set_alpha (PHOSH_LAYER_SURFACE (self), value);
++}
++
++
++static void
++fade_in_done_cb (PhoshHome *self)
++{
++  if (self->anim_stopping)
++    return;
++
++  phosh_layer_surface_set_alpha (PHOSH_LAYER_SURFACE (self), 1.0);
++  g_clear_pointer (&self->fade_in, phosh_animation_unref);
++}
++
++
++static void
++on_reflow_hold_done (gpointer data)
++{
++  PhoshHome *self = PHOSH_HOME (data);
++  PhoshLayerSurface *layer_surface = PHOSH_LAYER_SURFACE (self);
++
++  self->fade_in_id = 0;
++  /* The compositor's new width can come before GTK has restyled home for its
++   * new place, and a window is never made narrower than its content asks:
++   * home stayed ~930 px wide on a 675 px panel, across the hinge. Restyled
++   * by now, it is asked for the compositor's width again. */
++  gtk_window_resize (GTK_WINDOW (self),
++                     phosh_layer_surface_get_configured_width (layer_surface),
++                     phosh_layer_surface_get_configured_height (layer_surface));
++
++  if (self->state != PHOSH_HOME_STATE_UNFOLDED) {
++    phosh_layer_surface_set_alpha (layer_surface, 1.0);
++    return;
++  }
++
++  g_clear_pointer (&self->fade_in, phosh_animation_unref);
++  self->fade_in = phosh_animation_new (GTK_WIDGET (self),
++                                       0.0,
++                                       1.0,
++                                       PHOSH_HOME_FADE_IN_MS * PHOSH_ANIMATION_SLOWDOWN,
++                                       PHOSH_ANIMATION_TYPE_EASE_OUT_CUBIC,
++                                       (PhoshAnimationValueCallback) fade_in_value_cb,
++                                       (PhoshAnimationDoneCallback) fade_in_done_cb,
++                                       self);
++  phosh_animation_start (self->fade_in);
++}
++
++
++static void
++fade_out_value_cb (double value, PhoshHome *self)
++{
++  phosh_layer_surface_set_alpha (PHOSH_LAYER_SURFACE (self), value);
++}
++
++
++static void
++fade_out_done_cb (PhoshHome *self)
++{
++  if (self->anim_stopping)
++    return;
++
++  g_clear_pointer (&self->fade_out, phosh_animation_unref);
++  phosh_layer_surface_set_alpha (PHOSH_LAYER_SURFACE (self), 0.0);
++  /* out of sight now: take the new place */
++  self->reflow_ready = TRUE;
++  phosh_home_sync_panels (self);
++}
++
++
++static void
++phosh_home_fade_out (PhoshHome *self)
++{
++  double from = 1.0;
++
++  if (self->fade_out)
++    return;
++
++  g_clear_handle_id (&self->fade_in_id, g_source_remove);
++  if (self->fade_in)
++    from = phosh_animation_get_value (self->fade_in);
++  phosh_home_stop_animation (self, &self->fade_in);
++
++  self->fade_out = phosh_animation_new (GTK_WIDGET (self),
++                                        from,
++                                        0.0,
++                                        PHOSH_HOME_FADE_OUT_MS * PHOSH_ANIMATION_SLOWDOWN,
++                                        PHOSH_ANIMATION_TYPE_EASE_OUT_CUBIC,
++                                        (PhoshAnimationValueCallback) fade_out_value_cb,
++                                        (PhoshAnimationDoneCallback) fade_out_done_cb,
++                                        self);
++  phosh_animation_start (self->fade_out);
++}
++
++
++/*
++ * Home changing its width while standing - moving beside a new window, or
++ * back across the display - reflows: six columns become three, or three six.
++ * Drawn as it happens that was two jumps, the old width's last frame cut
++ * off over the new window and then the new grid at once. So home fades out
++ * first (phosh_home_fade_out: the new window shows through as it goes),
++ * takes its new width while it cannot be seen, and fades back in once the
++ * compositor has sized it and GTK has drawn it again.
++ */
++static void
++phosh_home_hide_reflow (PhoshHome *self)
++{
++  phosh_home_stop_animation (self, &self->fade_in);
++  /* folded, only the bar shows, and it may as well stay */
++  if (self->state == PHOSH_HOME_STATE_UNFOLDED)
++    phosh_layer_surface_set_alpha (PHOSH_LAYER_SURFACE (self), 0.0);
++
++  g_clear_handle_id (&self->fade_in_id, g_source_remove);
++  self->fade_in_id = g_timeout_add_once (PHOSH_HOME_REFLOW_HOLD_MS, on_reflow_hold_done, self);
++  g_source_set_name_by_id (self->fade_in_id, "[phosh] home reflow hold");
++}
++
++
++static gboolean
++phosh_home_one_free_panel (PhoshHome *self, int *left, int *right)
++{
++  PhoshShell *shell = phosh_shell_get_default ();
++  PhoshMonitor *monitor = phosh_shell_get_primary_monitor (shell);
++  GdkRectangle seam;
++
++  guint taken = self->panels_taken ?: self->expected_panel;
++
++  *left = *right = 0;
++  if (self->overview_forced || (taken != 1 && taken != 2))
++    return FALSE;
++
++  if (!monitor || !phosh_layout_manager_get_seam (phosh_shell_get_layout_manager (shell), &seam))
++    return FALSE;
++
++  if (taken == 1)                       /* left taken: the right one is free */
++    *left = seam.x + seam.width;
++  else
++    *right = monitor->logical.width - seam.x;
++
++  return TRUE;
++}
++
++
++#define PHOSH_HOME_HANDLE_HEIGHT     15
++#define PHOSH_HOME_HANDLE_PULL       30
++
++static const char handle_css[] =
++  "window.phosh-home-handle { background-color: transparent; }\n"
++  "window.phosh-home-handle .phosh-home-handle-pill {"
++  "  background-color: rgba(255, 255, 255, 0.6); border-radius: 3px;"
++  "  min-width: 120px; min-height: 5px; margin: 5px 0; }\n";
++
++
++/*
++ * Beside the desktop the window's panel had nothing to pull the overview up
++ * by - the overview is how a window is switched to or closed, and home, its
++ * surface, stands on the other panel. A handle along the bottom of the
++ * window's panel, where the home bar is, brings it up across the display
++ * with its cards as ever; choosing a card, or leaving, puts the desktop
++ * back beside the window.
++ */
++static void
++on_handle_drag_update (PhoshHome *self, double offset_x, double offset_y, GtkGestureDrag *drag)
++{
++  if (offset_y > -PHOSH_HOME_HANDLE_PULL || self->overview_forced)
++    return;
++
++  gtk_gesture_set_state (GTK_GESTURE (drag), GTK_EVENT_SEQUENCE_CLAIMED);
++  g_debug ("Overview pulled up from beside the desktop");
++  self->overview_forced = TRUE;
++  phosh_home_sync_panels (self);
++}
++
++
++static void
++phosh_home_create_handle (PhoshHome *self)
++{
++  PhoshShell *shell = phosh_shell_get_default ();
++  PhoshMonitor *monitor = phosh_shell_get_primary_monitor (shell);
++  g_autoptr (GtkCssProvider) provider = gtk_css_provider_new ();
++  GtkWidget *evbox, *pill;
++
++  if (!monitor)
++    return;
++
++  self->handle = g_object_new (PHOSH_TYPE_LAYER_SURFACE,
++                               "layer-shell", phosh_wayland_get_zwlr_layer_shell_v1 (phosh_wayland_get_default ()),
++                               "wl-output", monitor->wl_output,
++                               "anchor", ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
++                                         ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
++                                         ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT,
++                               "layer", ZWLR_LAYER_SHELL_V1_LAYER_TOP,
++                               "kbd-interactivity", FALSE,
++                               "exclusive-zone", 0,
++                               "height", PHOSH_HOME_HANDLE_HEIGHT,
++                               "namespace", "phosh home handle",
++                               NULL);
++  gtk_css_provider_load_from_data (provider, handle_css, -1, NULL);
++  gtk_style_context_add_provider_for_screen (gdk_screen_get_default (),
++                                             GTK_STYLE_PROVIDER (provider),
++                                             GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
++  gtk_style_context_add_class (gtk_widget_get_style_context (self->handle), "phosh-home-handle");
++
++  evbox = gtk_event_box_new ();
++  gtk_widget_set_visible (evbox, TRUE);
++  pill = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
++  gtk_widget_set_halign (pill, GTK_ALIGN_CENTER);
++  gtk_widget_set_valign (pill, GTK_ALIGN_END);
++  gtk_style_context_add_class (gtk_widget_get_style_context (pill), "phosh-home-handle-pill");
++  gtk_widget_set_visible (pill, TRUE);
++  gtk_container_add (GTK_CONTAINER (evbox), pill);
++  gtk_container_add (GTK_CONTAINER (self->handle), evbox);
++
++  self->handle_drag = gtk_gesture_drag_new (evbox);
++  gtk_gesture_single_set_touch_only (GTK_GESTURE_SINGLE (self->handle_drag), FALSE);
++  g_signal_connect_object (self->handle_drag, "drag-update",
++                           G_CALLBACK (on_handle_drag_update), self, G_CONNECT_SWAPPED);
++}
++
++
++static void
++phosh_home_update_handle (PhoshHome *self)
++{
++  PhoshShell *shell = phosh_shell_get_default ();
++  PhoshMonitor *monitor = phosh_shell_get_primary_monitor (shell);
++  guint taken = self->panels_taken ?: self->expected_panel;
++  GdkRectangle seam;
++  gboolean want;
++
++  want = self->on_one_panel && !self->overview_forced && monitor &&
++    self->state == PHOSH_HOME_STATE_UNFOLDED && gtk_widget_get_visible (GTK_WIDGET (self)) &&
++    phosh_layout_manager_get_seam (phosh_shell_get_layout_manager (shell), &seam);
++
++  if (!want) {
++    if (self->handle)
++      gtk_widget_set_visible (self->handle, FALSE);
++    return;
++  }
++
++  if (!self->handle)
++    phosh_home_create_handle (self);
++  if (!self->handle)
++    return;
++
++  if (taken == 1)               /* the window is on the left panel */
++    phosh_layer_surface_set_margins (PHOSH_LAYER_SURFACE (self->handle), 0,
++                                     monitor->logical.width - seam.x, 0, 0);
++  else
++    phosh_layer_surface_set_margins (PHOSH_LAYER_SURFACE (self->handle), 0,
++                                     0, 0, seam.x + seam.width);
++  gtk_widget_set_visible (self->handle, TRUE);
++}
++
++
++static void
++phosh_home_sync_panels (PhoshHome *self)
++{
++  PhoshDragSurfaceState drag_state = phosh_drag_surface_get_drag_state (PHOSH_DRAG_SURFACE (self));
++  int top, right, bottom, left, want_left, want_right;
++  gboolean one, changed;
++
++  if (!gtk_widget_get_visible (GTK_WIDGET (self)))
++    return;
++
++  /* Nothing moves under a fold in flight: the compositor animates the
++   * surface it was given, and a new width or new cards mid-way left home
++   * stuck half open across both panels. Its end syncs again. */
++  if (drag_state == PHOSH_DRAG_SURFACE_STATE_DRAGGED || self->animating)
++    return;
++
++  one = phosh_home_one_free_panel (self, &want_left, &want_right);
++
++  /* A card is how the overview shows what runs, and how it is closed: none
++   * beside a window, where home is a desktop, and none while nothing runs
++   * yet - the card of an app starting pushed the grid down for as long as
++   * it took. */
++  phosh_overview_set_hide_activities (PHOSH_OVERVIEW (self->overview),
++                                      one || (self->panels_taken == 0 && self->follows_panels));
++
++  phosh_layer_surface_get_margins (PHOSH_LAYER_SURFACE (self), &top, &right, &bottom, &left);
++  changed = left != want_left || right != want_right || one != self->on_one_panel;
++  if (changed && self->state == PHOSH_HOME_STATE_UNFOLDED && !self->reflow_ready) {
++    phosh_home_fade_out (self);
++    phosh_home_update_handle (self);
++    return;
++  }
++
++  if (changed) {
++    g_debug ("Home on %s", one ? (want_left ? "the right panel" : "the left panel") : "the whole display");
++    self->reflow_ready = FALSE;
++    self->on_one_panel = one;
++    phosh_home_hide_reflow (self);
++    phosh_util_toggle_style_class (GTK_WIDGET (self), "p-one-panel", one);
++    /* beside a window home needs no bar: the window and the wallpaper
++     * reach the bottom edge */
++    phosh_drag_surface_set_exclusive (PHOSH_DRAG_SURFACE (self), one ? 0 : PHOSH_HOME_BAR_HEIGHT);
++    phosh_layer_surface_set_margins (PHOSH_LAYER_SURFACE (self), top, want_right, bottom, want_left);
++    /* the wallpaper home stands on goes with it: over its panel to the
++     * bottom edge, and not over the window beside it */
++    if (self->background) {
++      phosh_layer_surface_set_margins (PHOSH_LAYER_SURFACE (self->background), 0, want_right, 0, want_left);
++      phosh_layer_surface_wl_surface_commit (PHOSH_LAYER_SURFACE (self->background));
++    }
++    if (self->state == PHOSH_HOME_STATE_UNFOLDED)
++      phosh_layer_surface_set_kbd_interactivity (PHOSH_LAYER_SURFACE (self), !one);
++    phosh_layer_surface_wl_surface_commit (PHOSH_LAYER_SURFACE (self));
++  }
++
++  if (!one) {
++    self->desktop_wanted = FALSE;
++    phosh_home_update_handle (self);
++    return;
++  }
++
++  /* already standing there - unfolded when the window came up beside it */
++  if (self->state == PHOSH_HOME_STATE_UNFOLDED) {
++    self->desktop_wanted = FALSE;
++  } else if (self->desktop_wanted) {
++    self->desktop_wanted = FALSE;
++    phosh_home_set_state (self, PHOSH_HOME_STATE_UNFOLDED);
++  }
++  phosh_home_update_handle (self);
++}
++
++
++static void
++on_panels_taken (void *data, struct phosh_private *phosh_private, uint32_t panels)
++{
++  PhoshHome *self = PHOSH_HOME (data);
++  guint was = self->panels_taken;
++  gboolean was_one = was == 1 || was == 2;
++  gboolean is_one = panels == 1 || panels == 2;
++
++  g_debug ("Panels taken: %u", panels);
++  if (panels != self->panels_taken)
++    self->overview_forced = FALSE;
++  self->panels_taken = panels;
++  if (panels) {
++    self->expected_panel = 0;
++    g_clear_handle_id (&self->expected_id, g_source_remove);
++  }
++
++  /* a panel newly free gets its desktop; a desktop folded by hand stays so */
++  if (is_one && (!was_one || panels != was))
++    self->desktop_wanted = TRUE;
++
++  /* both panels newly taken: nothing left to stand on */
++  if (panels == 3 && was != 3 && self->state == PHOSH_HOME_STATE_UNFOLDED) {
++    phosh_home_set_state (self, PHOSH_HOME_STATE_FOLDED);
++    return;
++  }
++
++  phosh_home_sync_panels (self);
++}
++
++
++static const struct phosh_private_listener phosh_private_listener = {
++  .panels_taken = on_panels_taken,
++};
++
++
++/**
++ * phosh_home_follows_panels:
++ * @self: The home surface
++ *
++ * Whether home follows the panels windows stand on - a display with a seam
++ * and a compositor that says which are taken. Home then goes on standing
++ * when an app is started from it: the app's window takes its panel and home
++ * moves over to the other one instead of folding and unfolding again.
++ *
++ * Returns: %TRUE if home follows the panels
++ */
++gboolean
++phosh_home_follows_panels (PhoshHome *self)
++{
++  PhoshShell *shell = phosh_shell_get_default ();
++  GdkRectangle seam;
++
++  g_return_val_if_fail (PHOSH_IS_HOME (self), FALSE);
++
++  return self->follows_panels &&
++    phosh_layout_manager_get_seam (phosh_shell_get_layout_manager (shell), &seam);
++}
++
++
++#define PHOSH_HOME_EXPECT_TIMEOUT_S 8
++
++static void
++on_animating_timeout (gpointer data)
++{
++  PhoshHome *self = PHOSH_HOME (data);
++
++  self->animating_id = 0;
++  self->animating = FALSE;
++  phosh_home_sync_panels (self);
++}
++
++static void
++on_expected_timeout (gpointer data)
++{
++  PhoshHome *self = PHOSH_HOME (data);
++
++  /* the app never came up: home back across the display */
++  g_debug ("No window on the expected panel");
++  self->expected_id = 0;
++  self->expected_panel = 0;
++  phosh_home_sync_panels (self);
++}
++
++
++static void
++phosh_home_expect_panel (PhoshHome *self, int launch_x)
++{
++  PhoshShell *shell = phosh_shell_get_default ();
++  GdkRectangle seam;
++
++  if (launch_x < 0 ||
++      !phosh_layout_manager_get_seam (phosh_shell_get_layout_manager (shell), &seam))
++    return;
++
++  self->expected_panel = launch_x < seam.x ? 1 : 2;
++  g_clear_handle_id (&self->expected_id, g_source_remove);
++  self->expected_id = g_timeout_add_seconds_once (PHOSH_HOME_EXPECT_TIMEOUT_S,
++                                                  on_expected_timeout, self);
++  g_source_set_name_by_id (self->expected_id, "[phosh] home expected panel");
++  phosh_home_sync_panels (self);
++}
++
++
+ static void
+ phosh_home_set_property (GObject      *object,
+                          guint         property_id,
+@@ -301,6 +789,23 @@ fold_cb (PhoshHome *self, PhoshOverview *overview)
+   g_return_if_fail (PHOSH_IS_HOME (self));
+   g_return_if_fail (PHOSH_IS_OVERVIEW (overview));
+ 
++  /* a card chosen, or the overview left, from beside the desktop: the
++   * desktop comes back beside the window */
++  if (self->overview_forced) {
++    self->overview_forced = FALSE;
++    phosh_home_sync_panels (self);
++    return;
++  }
++
++  /* With nothing open, the app's window takes one panel and home moves to
++   * the other: no fold to watch first. It moves at the tap - the panel
++   * tapped is the one the window will come up on (phoc) - so the splash
++   * shows there at once and the window finds its place ready. */
++  if (self->panels_taken == 0 && phosh_home_follows_panels (self)) {
++    phosh_home_expect_panel (self, phosh_shell_get_launch_x (phosh_shell_get_default ()));
++    return;
++  }
++
+   phosh_home_set_state (self, PHOSH_HOME_STATE_FOLDED);
+ }
+ 
+@@ -477,11 +982,16 @@ on_drag_state_changed (PhoshHome *self)
+   gboolean kbd_interactivity = FALSE;
+ 
+   drag_state = phosh_drag_surface_get_drag_state (PHOSH_DRAG_SURFACE (self));
++  if (self->animating && drag_state != PHOSH_DRAG_SURFACE_STATE_DRAGGED &&
++      drag_state == self->animation_target) {
++    self->animating = FALSE;
++    g_clear_handle_id (&self->animating_id, g_source_remove);
++  }
+ 
+   switch (drag_state) {
+   case PHOSH_DRAG_SURFACE_STATE_UNFOLDED:
+     state = PHOSH_HOME_STATE_UNFOLDED;
+-    kbd_interactivity = TRUE;
++    kbd_interactivity = !self->on_one_panel;
+     if (self->focus_app_search) {
+       phosh_overview_focus_app_search (PHOSH_OVERVIEW (self->overview));
+       self->focus_app_search = FALSE;
+@@ -490,6 +1000,7 @@ on_drag_state_changed (PhoshHome *self)
+     break;
+   case PHOSH_DRAG_SURFACE_STATE_FOLDED:
+     state = PHOSH_HOME_STATE_FOLDED;
++    self->overview_forced = FALSE;
+     phosh_home_set_background_alpha (self, 0.0);
+     phosh_overview_reset (PHOSH_OVERVIEW (self->overview));
+     break;
+@@ -518,6 +1029,10 @@ on_drag_state_changed (PhoshHome *self)
+    * has one - it kept the keyboard for good, no window could take the focus,
+    * and nothing that acts on the focused window did anything. */
+   phosh_layer_surface_wl_surface_commit (PHOSH_LAYER_SURFACE (self));
++
++  /* a fold or unfold finished: the panels may have changed meanwhile */
++  if (drag_state != PHOSH_DRAG_SURFACE_STATE_DRAGGED)
++    phosh_home_sync_panels (self);
+ }
+ 
+ 
+@@ -600,6 +1115,15 @@ phosh_home_constructed (GObject *object)
+                            self,
+                            G_CONNECT_SWAPPED);
+   on_theme_name_changed (self, NULL, phosh_shell_get_style_manager (shell));
++
++  {
++    PhoshWayland *wl = phosh_wayland_get_default ();
++    struct phosh_private *phosh_private = phosh_wayland_get_phosh_private (wl);
++
++    if (phosh_private &&
++        phosh_private_get_version (phosh_private) >= PHOSH_PRIVATE_PANELS_TAKEN_SINCE_VERSION)
++      self->follows_panels = !phosh_private_add_listener (phosh_private, &phosh_private_listener, self);
++  }
+ }
+ 
+ 
+@@ -616,6 +1140,13 @@ phosh_home_dispose (GObject *object)
+     g_clear_pointer (&self->action_names, g_strfreev);
+   }
+   g_clear_handle_id (&self->debounce_handle, g_source_remove);
++  g_clear_handle_id (&self->fade_in_id, g_source_remove);
++  g_clear_handle_id (&self->expected_id, g_source_remove);
++  g_clear_handle_id (&self->animating_id, g_source_remove);
++  g_clear_object (&self->handle_drag);
++  g_clear_pointer (&self->handle, phosh_cp_widget_destroy);
++  phosh_home_stop_animation (self, &self->fade_in);
++  phosh_home_stop_animation (self, &self->fade_out);
+ 
+   g_clear_pointer (&self->background, phosh_cp_widget_destroy);
+ 
+@@ -775,6 +1306,14 @@ phosh_home_set_state (PhoshHome *self, PhoshHomeState state)
+   if (state == PHOSH_HOME_STATE_UNFOLDED)
+     target_state = PHOSH_DRAG_SURFACE_STATE_UNFOLDED;
+ 
++  if (drag_state != target_state) {
++    self->animating = TRUE;
++    self->animation_target = target_state;
++    /* should the end never be said, home goes on following the panels */
++    g_clear_handle_id (&self->animating_id, g_source_remove);
++    self->animating_id = g_timeout_add_once (1000, on_animating_timeout, self);
++    g_source_set_name_by_id (self->animating_id, "[phosh] home animation guard");
++  }
+   phosh_drag_surface_set_drag_state (PHOSH_DRAG_SURFACE (self), target_state);
+ }
+ 
+diff --git a/src/home.h b/src/home.h
+index f049a7f4..f42e6db8 100644
+--- a/src/home.h
++++ b/src/home.h
+@@ -37,3 +37,4 @@ GtkWidget     *phosh_home_new (struct zwlr_layer_shell_v1          *layer_shell,
+ PhoshHomeState phosh_home_get_state (PhoshHome *self);
+ void           phosh_home_set_state (PhoshHome *self, PhoshHomeState state);
+ PhoshOverview *phosh_home_get_overview (PhoshHome *self);
++gboolean       phosh_home_follows_panels (PhoshHome *self);
+diff --git a/src/overview.c b/src/overview.c
+index ab30bccb..ae2af290 100644
+--- a/src/overview.c
++++ b/src/overview.c
+@@ -64,6 +64,7 @@ typedef struct {
+   PhoshSplashManager *splash_manager;  /* unowned */
+ 
+   int has_activities;
++  gboolean hide_activities;
+ } PhoshOverviewPrivate;
+ 
+ 
+@@ -608,7 +609,8 @@ set_has_activities (PhoshOverview *self)
+     return;
+ 
+   priv->has_activities = has_activities;
+-  gtk_widget_set_visible (GTK_WIDGET (priv->carousel_running_activities), has_activities);
++  gtk_widget_set_visible (GTK_WIDGET (priv->carousel_running_activities),
++                          has_activities && !priv->hide_activities);
+   g_object_notify_by_pspec (G_OBJECT (self), props[PROP_HAS_ACTIVITIES]);
+ }
+ 
+@@ -947,3 +949,29 @@ phosh_overview_get_app_grid (PhoshOverview *self)
+ 
+   return PHOSH_APP_GRID (priv->app_grid);
+ }
++
++/**
++ * phosh_overview_set_hide_activities:
++ * @self: The overview
++ * @hide: Whether to leave the running activities out
++ *
++ * Leaves the running activities out of the overview and shows the app grid
++ * alone - as when nothing is running. Home standing on one panel of a
++ * display with a seam, as the desktop beside a window, shows no card of the
++ * window it stands beside.
++ */
++void
++phosh_overview_set_hide_activities (PhoshOverview *self, gboolean hide)
++{
++  PhoshOverviewPrivate *priv;
++
++  g_return_if_fail (PHOSH_IS_OVERVIEW (self));
++  priv = phosh_overview_get_instance_private (self);
++
++  if (priv->hide_activities == hide)
++    return;
++
++  priv->hide_activities = hide;
++  gtk_widget_set_visible (GTK_WIDGET (priv->carousel_running_activities),
++                          priv->has_activities && !hide);
++}
+diff --git a/src/overview.h b/src/overview.h
+index 807df810..ddcb2fd2 100644
+--- a/src/overview.h
++++ b/src/overview.h
+@@ -24,5 +24,6 @@ void       phosh_overview_focus_app_search (PhoshOverview *self);
+ gboolean   phosh_overview_has_running_activities (PhoshOverview *self);
+ gboolean   phosh_overview_handle_search (PhoshOverview *self, GdkEvent *event);
+ PhoshAppGrid *phosh_overview_get_app_grid (PhoshOverview *self);
++void       phosh_overview_set_hide_activities (PhoshOverview *self, gboolean hide);
+ 
+ G_END_DECLS
+diff --git a/src/phosh-wayland.c b/src/phosh-wayland.c
+index cba8a12c..5ce6224e 100644
+--- a/src/phosh-wayland.c
++++ b/src/phosh-wayland.c
+@@ -79,7 +79,7 @@ registry_handle_global (void               *data,
+     self->phosh_private = wl_registry_bind (registry,
+                                             name,
+                                             &phosh_private_interface,
+-                                            MIN (7, version));
++                                            MIN (8, version));
+     self->phosh_private_version = version;
+   } else if (!strcmp (interface, zphoc_layer_shell_effects_v1_interface.name)) {
+     self->zphoc_layer_shell_effects_v1 = wl_registry_bind (registry,
+diff --git a/src/shell-priv.h b/src/shell-priv.h
+index ebc3af95..152bc8c0 100644
+--- a/src/shell-priv.h
++++ b/src/shell-priv.h
+@@ -95,6 +95,7 @@ PhoshGtkMountManager   *phosh_shell_get_gtk_mount_manager  (PhoshShell *self);
+ PhoshLayoutManager     *phosh_shell_get_layout_manager     (PhoshShell *self);
+ void                    phosh_shell_set_launch_x           (PhoshShell *self, int x);
+ int                     phosh_shell_take_launch_x          (PhoshShell *self);
++int                     phosh_shell_get_launch_x           (PhoshShell *self);
+ PhoshModeManager       *phosh_shell_get_mode_manager       (PhoshShell *self);
+ PhoshSplashManager *    phosh_shell_get_splash_manager     (PhoshShell *self);
+ PhoshStyleManager      *phosh_shell_get_style_manager      (PhoshShell *self);
+diff --git a/src/shell.c b/src/shell.c
+index 0dfa8a94..1f2b05c3 100644
+--- a/src/shell.c
++++ b/src/shell.c
+@@ -150,6 +150,8 @@ typedef struct {
+   PhoshDragSurface           *top_panel_right;
+   /* where on the output an app was last launched from, or -1 (splash.c) */
+   int                         launch_x;
++  int                         last_launch_x;
++  gint64                      last_launch_time;
+   PhoshDragSurface           *home;
+   gboolean                    overview_visible;
+   GPtrArray                  *faders; /* for final fade out */
+@@ -801,7 +803,9 @@ on_toplevel_added (PhoshShell *self, PhoshToplevel *unused, PhoshToplevelManager
+   g_return_if_fail (PHOSH_IS_TOPLEVEL_MANAGER (toplevel_manager));
+ 
+   priv = phosh_shell_get_instance_private (self);
+-  if (phosh_toplevel_manager_get_num_toplevels (toplevel_manager) == 1)
++  /* on a display with a seam home moves beside the new window instead */
++  if (phosh_toplevel_manager_get_num_toplevels (toplevel_manager) == 1 &&
++      !phosh_home_follows_panels (PHOSH_HOME (priv->home)))
+     phosh_home_set_state (PHOSH_HOME (priv->home), PHOSH_HOME_STATE_FOLDED);
+ }
+ 
+@@ -1912,6 +1916,28 @@ phosh_shell_set_launch_x (PhoshShell *self, int x)
+   PhoshShellPrivate *priv = phosh_shell_get_instance_private (self);
+ 
+   priv->launch_x = x;
++  priv->last_launch_x = x;
++  priv->last_launch_time = g_get_monotonic_time ();
++}
++
++/**
++ * phosh_shell_get_launch_x:
++ *
++ * Where the launch of the last second came from. The splash takes its own
++ * copy (phosh_shell_take_launch_x) as the app starts, before anyone else
++ * hears of the launch; home reads this one afterwards.
++ *
++ * Returns: where the last launch came from if within the last second, or -1
++ */
++int
++phosh_shell_get_launch_x (PhoshShell *self)
++{
++  PhoshShellPrivate *priv = phosh_shell_get_instance_private (self);
++
++  if (g_get_monotonic_time () - priv->last_launch_time > G_USEC_PER_SEC)
++    return -1;
++
++  return priv->last_launch_x;
+ }
+ 
+ /**
+-- 
+2.43.0
+

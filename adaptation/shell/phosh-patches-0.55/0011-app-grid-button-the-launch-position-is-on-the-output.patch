@@ -1,0 +1,51 @@
+From a1dad0510d7365055e048cf18ff107ad289a91e7 Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 00:11:13 +0300
+Subject: [PATCH 11/12] app-grid-button: the launch position is on the output,
+ wherever the grid's window starts
+
+The splash of an app launched from the grid comes up on the panel of the
+tap. The position was the button's within the grid's window, the same as
+on the output while home spans it; home standing on the right panel of a
+display with a seam starts past the seam, and a tap there put the splash
+on the left panel, over the window beside. The window's left margin is
+added.
+---
+ src/app-grid-button.c | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/src/app-grid-button.c b/src/app-grid-button.c
+index cb192a44..776da57f 100644
+--- a/src/app-grid-button.c
++++ b/src/app-grid-button.c
+@@ -9,6 +9,7 @@
+ #include "phosh-config.h"
+ #include "app-tracker.h"
+ #include "app-grid-button.h"
++#include "layersurface-priv.h"
+ #include "clamp.h"
+ #include "fading-label.h"
+ #include "metainfo-cache.h"
+@@ -217,8 +218,18 @@ activate_cb (PhoshAppGridButton *self)
+ 
+     if (gtk_widget_translate_coordinates (GTK_WIDGET (self), top,
+                                           gtk_widget_get_allocated_width (GTK_WIDGET (self)) / 2,
+-                                          0, &x, &y))
++                                          0, &x, &y)) {
++      /* the grid's window need not start at the output's left edge: home
++       * standing on the right panel beside a window starts past the seam */
++      if (PHOSH_IS_LAYER_SURFACE (top)) {
++        int margin_top, margin_right, margin_bottom, margin_left;
++
++        phosh_layer_surface_get_margins (PHOSH_LAYER_SURFACE (top), &margin_top, &margin_right,
++                                         &margin_bottom, &margin_left);
++        x += margin_left;
++      }
+       phosh_shell_set_launch_x (phosh_shell_get_default (), x);
++    }
+   }
+   phosh_app_tracker_launch_app_info (app_tracker, priv->info);
+   g_signal_emit (self, signals[APP_LAUNCHED], 0, priv->info);
+-- 
+2.43.0
+

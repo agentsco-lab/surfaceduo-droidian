@@ -1,0 +1,204 @@
+From afe4d8c6cb10194f407f194ac64786a8fc27ce13 Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 00:10:58 +0300
+Subject: [PATCH 18/18] phosh-private: the panels windows stand on are said to
+ the shell
+
+On an output made of two panels - a tiling seam down its middle - the
+shell cannot tell which panels are taken: the toplevel list says nothing
+of where a window is. A new event, panels_taken (phosh_private version 8),
+says it as a bitmask, bit 0 the panel left of the seam, bit 1 the right
+one: once on bind and again when it changes, worked out before each frame
+from the mapped views - a view on the panel its centre is over, a
+fullscreen one on both. A shell that does not know the event ignores it.
+---
+ protocols/phosh-private.xml | 12 +++++++++-
+ src/desktop.c               | 48 +++++++++++++++++++++++++++++++++++++
+ src/desktop.h               |  2 ++
+ src/output.c                |  2 ++
+ src/phosh-private.c         | 27 ++++++++++++++++++++-
+ src/phosh-private.h         |  1 +
+ 6 files changed, 90 insertions(+), 2 deletions(-)
+
+diff --git a/protocols/phosh-private.xml b/protocols/phosh-private.xml
+index e120aff..948d25f 100644
+--- a/protocols/phosh-private.xml
++++ b/protocols/phosh-private.xml
+@@ -23,7 +23,7 @@
+     ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+     THIS SOFTWARE.
+   </copyright>
+-  <interface name="phosh_private" version="7">
++  <interface name="phosh_private" version="8">
+     <description summary="Phone shell extensions">
+       Private protocol between phosh and the compositor.
+ 
+@@ -97,6 +97,16 @@
+       <arg name="state" type="uint" enum="shell_state" summary="Status"/>
+     </request>
+ 
++    <event name="panels_taken" since="8">
++      <description summary="Which panels of a display with a seam windows stand on">
++        On an output made of two panels - a tiling seam down its middle -
++        the panels windows stand on: bit 0 the panel left of the seam,
++        bit 1 the one right of it. Sent once on bind and again whenever it
++        changes.
++      </description>
++      <arg name="panels" type="uint" summary="the panels taken, as a bitmask"/>
++    </event>
++
+   </interface>
+ 
+   <interface name="phosh_private_keyboard_event" version="7">
+diff --git a/src/desktop.c b/src/desktop.c
+index 6752668..6a49b4f 100644
+--- a/src/desktop.c
++++ b/src/desktop.c
+@@ -1450,3 +1450,51 @@ phoc_desktop_set_view_always_on_top (PhocDesktop *self, PhocView *view, gboolean
+   wl_list_for_each_reverse (child, &view->stack, parent_link)
+     phoc_desktop_set_view_always_on_top (self, child, on_top);
+ }
++
++/**
++ * phoc_desktop_update_panels_taken:
++ * @self: The desktop
++ * @output: The output about to be drawn
++ *
++ * On an output made of two panels, tells the shell which of them windows
++ * stand on - a window on the panel its centre is over, a fullscreen one on
++ * both - so it can keep a free panel from standing empty. Cheap enough to
++ * run before every frame, and a change of windows always brings one.
++ */
++void
++phoc_desktop_update_panels_taken (PhocDesktop *self, PhocOutput *output)
++{
++  PhocDesktopPrivate *priv = phoc_desktop_get_instance_private (self);
++  PhocOutputConfig *oc;
++  struct wlr_box output_box;
++  guint32 panels = 0;
++
++  if (wl_list_length (&self->outputs) != 1)
++    return;
++
++  oc = phoc_config_get_output (phoc_server_get_config (phoc_server_get_default ()), output);
++  if (!oc || oc->seam <= 0 || output->usable_area.width <= output->usable_area.height)
++    return;
++
++  wlr_output_layout_get_box (self->layout, output->wlr_output, &output_box);
++  for (GList *l = priv->views->head; l; l = l->next) {
++    PhocView *view = PHOC_VIEW (l->data);
++    struct wlr_box box, overlap;
++
++    if (!phoc_view_is_mapped (view))
++      continue;
++
++    if (phoc_view_is_fullscreen (view)) {
++      panels = 3;
++      break;
++    }
++
++    phoc_view_get_box (view, &box);
++    if (!wlr_box_intersection (&overlap, &box, &output_box))
++      continue;
++
++    panels |= (box.x + box.width / 2.0 < output_box.x + output_box.width / 2.0) ? 1 : 2;
++  }
++
++  phoc_phosh_private_set_panels_taken (priv->phosh, panels);
++}
+diff --git a/src/desktop.h b/src/desktop.h
+index 6a09b27..67f7540 100644
+--- a/src/desktop.h
++++ b/src/desktop.h
+@@ -168,6 +168,8 @@ GSList *                phoc_desktop_get_layer_surface_stacks    (PhocDesktop *s
+ 
+ PhocGtkShell *          phoc_desktop_get_gtk_shell               (PhocDesktop *self);
+ PhocPhoshPrivate *      phoc_desktop_get_phosh_private           (PhocDesktop *self);
++void                    phoc_desktop_update_panels_taken         (PhocDesktop *self,
++                                                                  PhocOutput  *output);
+ 
+ void                    phoc_desktop_notify_activity             (PhocDesktop *self,
+                                                                   PhocSeat    *seat);
+diff --git a/src/output.c b/src/output.c
+index a957e1e..6083c88 100644
+--- a/src/output.c
++++ b/src/output.c
+@@ -596,6 +596,8 @@ phoc_output_draw (PhocOutput *self)
+   if (!wlr_output->enabled)
+     return;
+ 
++  phoc_desktop_update_panels_taken (phoc_server_get_desktop (phoc_server_get_default ()), self);
++
+   needs_frame = wlr_output->needs_frame;
+   needs_frame |= pixman_region32_not_empty (&self->damage_ring.current);
+   needs_frame |= priv->gamma_lut_changed;
+diff --git a/src/phosh-private.c b/src/phosh-private.c
+index 42d2a1a..8c82d5e 100644
+--- a/src/phosh-private.c
++++ b/src/phosh-private.c
+@@ -50,6 +50,7 @@ struct _PhocPhoshPrivate {
+   guint last_action_id;
+   GList *startup_trackers;
+   PhocPhoshPrivateShellState state;
++  guint32 panels_taken;
+ };
+ G_DEFINE_TYPE (PhocPhoshPrivate, phoc_phosh_private, G_TYPE_OBJECT)
+ 
+@@ -83,7 +84,7 @@ static PhocPhoshPrivateKeyboardEventData *phoc_phosh_private_keyboard_event_from
+ static PhocPhoshPrivateScreencopyFrame *phoc_phosh_private_screencopy_frame_from_resource(struct wl_resource *resource);
+ static PhocPhoshPrivateStartupTracker *phoc_phosh_private_startup_tracker_from_resource(struct wl_resource *resource);
+ 
+-#define PHOSH_PRIVATE_VERSION 7
++#define PHOSH_PRIVATE_VERSION 8
+ 
+ 
+ static void
+@@ -702,6 +703,8 @@ phosh_private_bind (struct wl_client *client, void *data, uint32_t version, uint
+     phosh->resource = resource;
+     g_debug ("Bound client %d with version %d", id, version);
+     phosh->version = version;
++    if (version >= PHOSH_PRIVATE_PANELS_TAKEN_SINCE_VERSION)
++      phosh_private_send_panels_taken (resource, phosh->panels_taken);
+     return;
+   }
+ 
+@@ -907,3 +910,25 @@ phoc_phosh_private_get_global (PhocPhoshPrivate *self)
+ 
+   return self->global;
+ }
++
++/**
++ * phoc_phosh_private_set_panels_taken:
++ * @self: The phosh private protocol
++ * @panels: The panels windows stand on: bit 0 left of the seam, bit 1 right
++ *
++ * Tells the shell which panels of an output with a seam are taken, when that
++ * changes.
++ */
++void
++phoc_phosh_private_set_panels_taken (PhocPhoshPrivate *self, guint32 panels)
++{
++  g_assert (PHOC_IS_PHOSH_PRIVATE (self));
++
++  if (self->panels_taken == panels)
++    return;
++
++  g_debug ("Panels taken: %u", panels);
++  self->panels_taken = panels;
++  if (self->resource && self->version >= PHOSH_PRIVATE_PANELS_TAKEN_SINCE_VERSION)
++    phosh_private_send_panels_taken (self->resource, panels);
++}
+diff --git a/src/phosh-private.h b/src/phosh-private.h
+index 3245155..43e43d7 100644
+--- a/src/phosh-private.h
++++ b/src/phosh-private.h
+@@ -33,5 +33,6 @@ void              phoc_phosh_private_notify_launch (PhocPhoshPrivate
+                                                     enum phosh_private_startup_tracker_protocol proto);
+ PhocPhoshPrivateShellState phoc_phosh_private_get_shell_state (PhocPhoshPrivate *self);
+ struct wl_global *phoc_phosh_private_get_global     (PhocPhoshPrivate *self);
++void              phoc_phosh_private_set_panels_taken (PhocPhoshPrivate *self, guint32 panels);
+ 
+ G_END_DECLS
+-- 
+2.43.0
+
