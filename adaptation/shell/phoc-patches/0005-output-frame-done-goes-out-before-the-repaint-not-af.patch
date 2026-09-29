@@ -1,7 +1,7 @@
 From 257ff5d03d709bf7246bc17a77333672b3805ce7 Mon Sep 17 00:00:00 2001
 From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Wed, 23 Sep 2026 15:57:06 +0300
-Subject: [PATCH 05/13] output: frame done goes out before the repaint, not
+Subject: [PATCH 05/14] output: frame done goes out before the repaint, not
  after the swap
 
 On hwcomposer the swap blocks for ~5 ms, and frame done sent after it

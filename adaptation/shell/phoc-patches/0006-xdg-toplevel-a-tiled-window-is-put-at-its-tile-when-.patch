@@ -1,7 +1,7 @@
 From 58c5b2da58cb74b577bbd4cc4f58eb7348888d98 Mon Sep 17 00:00:00 2001
 From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Thu, 24 Sep 2026 17:53:19 +0300
-Subject: [PATCH 06/13] xdg-toplevel: a tiled window is put at its tile when
+Subject: [PATCH 06/14] xdg-toplevel: a tiled window is put at its tile when
  its geometry moves
 
 A client that changes its geometry's offset - a window whose shadow

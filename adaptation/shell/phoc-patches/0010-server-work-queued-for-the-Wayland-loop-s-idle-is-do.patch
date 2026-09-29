@@ -1,7 +1,7 @@
 From df6c9235f4310c9370ca7320251748e233143506 Mon Sep 17 00:00:00 2001
 From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 15:14:36 +0300
-Subject: [PATCH 10/13] server: work queued for the Wayland loop's idle is done
+Subject: [PATCH 10/14] server: work queued for the Wayland loop's idle is done
  before GLib sleeps
 
 The Wayland loop runs inside GLib's as a source woken by its fd, and its

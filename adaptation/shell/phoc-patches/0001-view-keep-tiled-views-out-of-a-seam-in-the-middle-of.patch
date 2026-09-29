@@ -1,7 +1,7 @@
 From 1d5f18bec0c3d1982de0f6eaa91aba5fde8b6a8b Mon Sep 17 00:00:00 2001
 From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Fri, 18 Sep 2026 12:55:11 +0300
-Subject: [PATCH 01/13] view: keep tiled views out of a seam in the middle of
+Subject: [PATCH 01/14] view: keep tiled views out of a seam in the middle of
  the output
 
 An output that is really two panels with a hinge between them - the

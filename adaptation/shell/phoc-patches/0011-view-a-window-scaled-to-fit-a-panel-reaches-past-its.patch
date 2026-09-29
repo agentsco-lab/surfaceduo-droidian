@@ -1,7 +1,7 @@
 From 780b46858cf42a95f5b50872baf5f4e0150e1b61 Mon Sep 17 00:00:00 2001
 From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 18:50:56 +0300
-Subject: [PATCH 11/13] view: a window scaled to fit a panel reaches past its
+Subject: [PATCH 11/14] view: a window scaled to fit a panel reaches past its
  edges
 
 A window wider than a panel - GNOME Contacts' first window wants 800 of

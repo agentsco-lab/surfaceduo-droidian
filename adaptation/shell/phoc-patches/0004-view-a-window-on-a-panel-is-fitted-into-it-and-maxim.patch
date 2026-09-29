@@ -1,7 +1,7 @@
 From 3e1b0697a978c2ce5500574cc21c69bfcbc51992 Mon Sep 17 00:00:00 2001
 From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Sun, 20 Sep 2026 01:25:32 +0300
-Subject: [PATCH 04/13] view: a window on a panel is fitted into it, and
+Subject: [PATCH 04/14] view: a window on a panel is fitted into it, and
  maximized means one panel
 
 On an output with a tiling-seam, maximizing put a window across the hinge:

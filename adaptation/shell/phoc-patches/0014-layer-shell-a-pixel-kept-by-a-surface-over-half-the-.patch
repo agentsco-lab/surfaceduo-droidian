@@ -1,0 +1,44 @@
+From 653bc90460329dfc46e2227a7430a5e4d94c6f66 Mon Sep 17 00:00:00 2001
+From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
+Date: Tue, 29 Sep 2026 10:17:26 +0300
+Subject: [PATCH 14/14] layer-shell: a pixel kept by a surface over half the
+ output is not taken from windows
+
+phosh's far-half top bar keeps a zone of one pixel so that it stays drawn
+above its backdrop. Beside the near half's bar, which keeps its full
+height, the two were added up: every window stood a pixel lower than the
+bar, and the wallpaper showed in a line above it. A zone of a pixel or two
+kept at the top by a surface narrower than the output no longer reduces
+the usable area; for a folded draggable surface the zone is its exclusive
+zone less its negative top margin.
+---
+ src/layer-shell.c | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/src/layer-shell.c b/src/layer-shell.c
+index 275e976..992f242 100644
+--- a/src/layer-shell.c
++++ b/src/layer-shell.c
+@@ -217,7 +217,18 @@ arrange_layer (PhocOutput                     *output,
+     /* Apply */
+     struct wlr_box old_geo = layer_surface->geo;
+     layer_surface->geo = box;
+-    if (wlr_layer_surface->surface->mapped) {
++    /* A pixel or two kept at the top by a surface over part of the output's
++     * width is phosh's far-half top bar, keeping its zone positive so that
++     * it stays drawn above its backdrop (#63), not a strip the windows have
++     * to keep out of: added to the near half's bar it put every window a
++     * pixel lower, the wallpaper showing above it. A folded draggable
++     * surface keeps that pixel as its zone less its (negative) top margin -
++     * 869 - 868 - so it is the two together that count. */
++    if (wlr_layer_surface->surface->mapped &&
++        !(state->exclusive_zone > 0 && box.width < full_area.width &&
++          (state->anchor & ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP) &&
++          state->exclusive_zone + state->margin.top > 0 &&
++          state->exclusive_zone + state->margin.top <= 2)) {
+       apply_exclusive (usable_area, state->anchor, state->exclusive_zone,
+                        state->margin.top, state->margin.right,
+                        state->margin.bottom, state->margin.left);
+-- 
+2.43.0
+
