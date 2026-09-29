@@ -69,8 +69,10 @@ tiling_lock() {
     # on a panel, every window stayed at its own size, floating over the
     # others - what a fresh image showed before `sfduo-shell-setup` had run.
     if [ "$1" = on ] && ! dock_can_run; then
-        echo "sfduo-phosh: the dock cannot run yet - phosh maximizes windows until"
-        echo "sfduo-phosh: \`sudo sfduo-shell-setup\` has installed what it needs"
+        if [ -x /usr/local/bin/sfduo-dock ]; then
+            echo "sfduo-phosh: the dock cannot run yet - phosh maximizes windows until"
+            echo "sfduo-phosh: \`sudo sfduo-shell-setup\` has installed what it needs"
+        fi
         set -- off
     fi
     if [ "$1" = on ]; then
