@@ -1,7 +1,7 @@
 From 904b9d4b35827d89367ae619590951d7f463fbb6 Mon Sep 17 00:00:00 2001
 From: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 02:51:36 +0300
-Subject: [PATCH 07/13] layer-shell: a keyboard on one panel reserves that
+Subject: [PATCH 07/14] layer-shell: a keyboard on one panel reserves that
  panel's bottom
 
 On an output with a tiling-seam, a layer surface anchored to the bottom and one side that asks for an exclusive zone reserves the bottom of the panel it stands on: windows tiled there are made that much shorter, the other panel's are left alone. The protocol gives a corner-anchored surface no zone, so windows stayed under the one-panel keyboard. The reservation is what the surface asks for, not where its slide has got to, so windows are resized once. A window fitted into a panel by scaling (0008) is asked for the box's height at its scale, rather than centred in a shorter box with its bottom still under the keyboard.
