@@ -56,6 +56,9 @@ PANELS=/usr/lib/sfduo/phosh/display-panels
 PANELS_LIVE=/var/lib/droidian/phosh-notch
 
 dock_can_run() {
+    # the dock is the two-panel shell's (agentsco-lab/item), not the port's:
+    # without it phosh maximizes every window, one panel each (phoc)
+    [ -x /usr/local/bin/sfduo-dock ] &&
     command -v wlrctl >/dev/null 2>&1 && command -v wtype >/dev/null 2>&1 &&
         python3 -c 'import gi; gi.require_version("GtkLayerShell", "0.1")' 2>/dev/null
 }
