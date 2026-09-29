@@ -119,7 +119,8 @@ Two more things that looked like slowness and were not the shell's:
 ## Keeping it: sfduo-perfcheck
 
 Everything above was measured by hand. `sudo sfduo-perfcheck` on the device
-(`tools/sfduo-perfcheck`, installed by the package) runs the same scenarios
+(part of the two-panel shell since 0.21: agentsco-lab/item, `tools/`,
+installed by item-shell - its scenarios go through the dock) runs the same scenarios
 the same way - Calculator launched onto the right panel and closed, the grid
 by signal and by a flick of the synthetic finger (`sfduo-touch`), a 2 s
 unlock swipe on the lock screen with phosh's frames counted - and prints

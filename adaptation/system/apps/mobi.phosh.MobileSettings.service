@@ -1,3 +1,0 @@
-[D-BUS Service]
-Name=mobi.phosh.MobileSettings
-Exec=/usr/local/bin/phosh-mobile-settings

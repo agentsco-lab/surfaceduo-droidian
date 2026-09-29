@@ -18,9 +18,9 @@ If this stops, the grab goes with it and the original node reaches the
 compositor again - touch never depends on this being alive.
 
 The pen is a tablet tool only where it draws: on the pen's sheet
-(sfduo-pen-screen), out over the right panel. Everywhere else it is one more
-finger, so that the shell's and the dock's swipes, which take touches, take
-the pen too; hovering is not a touch. Which one a stroke is, is decided as
+(sfduo-pen-screen, part of the two-panel shell, item-shell), out over the
+right panel. Everywhere else it is one more finger, so that the shell's
+swipes, which take touches, take the pen too; hovering is not a touch. Which one a stroke is, is decided as
 the pen comes near and kept until it leaves. The sheet says whether it is out
 with a datagram to PEN_SOCK: "1" out, "0" not.
 

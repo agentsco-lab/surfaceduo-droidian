@@ -925,9 +925,8 @@ install -m644 "$SYSTEM/sfduo-modem-watch.service" "$PKG/usr/lib/systemd/system/"
 # restarts on StopDozing with the screen on)
 install -m644 "$SYSTEM/sfduo-cpufreq.service"    "$PKG/usr/lib/systemd/system/"
 install -m755 "$SYSTEM/sfduo-cpufreq"            "$PKG/usr/local/sbin/"
-# the shell's frame times, measured the same way every time (tools/
-# sfduo-perfcheck, #52), and the synthetic finger it moves (tools/sfduo-touch)
-install -m755 "$ROOT/tools/sfduo-perfcheck"       "$PKG/usr/local/sbin/"
+# a synthetic finger (tools/sfduo-touch), for measuring the shell without
+# one; sfduo-perfcheck, which moves it, is the two-panel shell's (item-shell)
 install -m755 "$ROOT/tools/sfduo-touch"           "$PKG/usr/local/sbin/"
 # The hinge-angle sensor: a rebuilt sensorfw (sensorfw-hinge-patch/), carried
 # as debs and installed by `sudo sfduo-sensorfw-install` after the package -
@@ -1100,7 +1099,7 @@ Architecture: arm64
 Maintainer: Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>
 Section: misc
 Priority: optional
-Recommends: python3-gi, python3-gi-cairo, python3-cairo, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, wlrctl, wtype, dconf-cli, gir1.2-gtk-4.0, gir1.2-gtk4layershell-1.0, libgtk4-layer-shell0, gir1.2-adw-1, gir1.2-ecal-2.0, gir1.2-edataserver-1.2, python3-evdev, e2fsprogs
+Recommends: python3-gi, gir1.2-gtk-3.0, dconf-cli, python3-evdev, e2fsprogs
 Description: Surface Duo 1 adaptation for Droidian (sfduo)
  USB RNDIS gadget access (172.16.42.1, telnet fallback) and, as bring-up
  progresses, touch / wifi / sensor plumbing for the Microsoft Surface Duo 1.

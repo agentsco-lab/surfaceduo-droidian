@@ -168,13 +168,21 @@ sudo reboot
 ```
 
 The package was installed offline, before the phone had a network, so it
-only recommends what it needs from Debian. This installs it: the GTK and
-layer-shell libraries of the dock, the clock and the pen's screen,
-`python3-evdev` for the pen, `e2fsprogs` for growing the root filesystem.
-It then lets the patched phosh tile windows to a panel. The reboot starts
-the session with all of it. After it: the
-dock in two halves, the pen, and the root filesystem grown to the size of
-userdata.
+only recommends what it needs from Debian. This installs it: the GTK
+bindings of its Python scripts, `python3-evdev` for the pen, `dconf`, and
+`e2fsprogs` for growing the root filesystem. The reboot starts the session
+with all of it: Droidian's own shell on two panels, the pen, and the root
+filesystem grown to the size of userdata.
+
+The two-panel shell - a dock across both panels, windows tiled to the panel
+they were launched from, the system screen and the pen's sheet - is optional,
+a package of its own on top of this one, item-shell from
+[agentsco-lab/item](https://github.com/agentsco-lab/item):
+
+```
+sudo apt install ./item-shell_<version>_arm64.deb
+sudo systemctl restart phosh
+```
 
 Then, in Settings:
 

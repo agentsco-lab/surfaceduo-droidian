@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Surface Duo pen sheet
-Comment=The page right of the right panel, brought by a swipe left on its desktop; the pen draws on it
-Exec=/usr/local/bin/sfduo-pen-screen
-Icon=document-edit-symbolic
-Terminal=false
-NoDisplay=true
