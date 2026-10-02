@@ -310,6 +310,15 @@ case "$1" in
         sleep 1
         UDC=$(cat /run/sfduo-udc-saved 2>/dev/null)
         [ -n "$UDC" ] && echo "$UDC" > $G/UDC 2>/dev/null
+        # The gadget bound again makes its network interface anew: its
+        # address, as sfduo-usb-gadget.sh gives it at boot (without it
+        # 172.16.42.1 was gone after every resume).
+        sleep 1
+        for IFACE in usb0 rndis0; do
+            ip link show "$IFACE" >/dev/null 2>&1 || continue
+            ip addr add 172.16.42.1/24 dev "$IFACE" 2>/dev/null
+            ip link set "$IFACE" up
+        done
         ;;
 esac
 exit 0
@@ -343,11 +352,19 @@ chmod 755 "$PKG/usr/lib/systemd/system-sleep/sfduo-brightness"
 # The keypress/finger-touch that wakes the SoC is consumed during resume
 # and never reaches the compositor - phosh stays blanked and a short
 # power press "looks dead". Inject KEY_WAKEUP after every resume so the
-# lockscreen lights up regardless of what woke us.
+# lockscreen lights up regardless of what woke us. Only under phosh, which
+# needs it: a shell that reads what woke the phone itself
+# (/sys/power/pm_wakeup_irq) lights the screen as it sees fit, and a
+# nudge after every resume - a Wi-Fi packet's too - would light it for
+# nothing. Detached and bounded:
+# systemd-sleep waits for a hook's output to close, and the python left
+# holding it kept "resumed" from being said for 90 s - the network and
+# the modem asleep all that while (2026-10-02).
 cat > "$PKG/usr/lib/systemd/system-sleep/sfduo-unblank" <<'SLEEP'
 #!/bin/sh
 [ "$1" = "post" ] || exit 0
-python3 - <<PY &
+pgrep -x phosh >/dev/null || exit 0
+setsid timeout 5 python3 - > /dev/null 2>&1 < /dev/null <<PY &
 from evdev import UInput, ecodes as e
 ui = UInput({e.EV_KEY: [e.KEY_WAKEUP]}, name="sfduo-wake-nudge")
 ui.write(e.EV_KEY, e.KEY_WAKEUP, 1); ui.syn()
