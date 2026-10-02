@@ -878,6 +878,19 @@ def panels_lit():
             pass
     return False
 
+def mdns(on):
+    """avahi (mDNS) with the lid: closed, it is stopped, socket and all (a
+    client's asking would start it again). Joined to 224.0.0.251, the Wi-Fi
+    firmware woke the sleeping phone for every mDNS packet on the network -
+    every one of the Wi-Fi wakes read on 2026-10-02 was one. Android stops
+    its network discovery with the screen off too. Not waited for."""
+    units = ["avahi-daemon.socket", "avahi-daemon.service"]
+    try:
+        subprocess.Popen(["systemctl", "start" if on else "stop"] + units,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
 def screens_on(fd):
     ev(fd, EV_KEY, KEY_WAKEUP, 1); ev(fd, EV_SYN, 0, 0)
     ev(fd, EV_KEY, KEY_WAKEUP, 0); ev(fd, EV_SYN, 0, 0)
@@ -933,6 +946,8 @@ def main():
     last = read_val()
     if not node:
         emit_lid(ufd, last == 0)
+    if last == 0:
+        mdns(False)
     lit = 0                    # ticks the panels have been lit while closed
     while True:
         wait()
@@ -946,6 +961,7 @@ def main():
                 screens_on(ufd)
             else:
                 display_power(3)
+            mdns(val == 1)
         elif val == 0:
             # Closed, and something lit the display anyway - a call, a
             # critical notification, the power key - and with idle blanking
@@ -984,6 +1000,15 @@ mkdir -p "$PKG/usr/lib/systemd/system/lxc@android.service.d"
 printf '[Service]\nExecStart=\nExecStart=/usr/local/sbin/sfduo-lxc-notify\n' \
     > "$PKG/usr/lib/systemd/system/lxc@android.service.d/10-sfduo-notify.conf"
 
+# No LLMNR (nor resolved's mDNS): its groups (224.0.0.252, ff02::1:3) on
+# wlan0 are more multicast for the Wi-Fi firmware to wake the phone for,
+# for a Windows naming scheme a phone has no use of.
+mkdir -p "$PKG/etc/systemd/resolved.conf.d"
+cat > "$PKG/etc/systemd/resolved.conf.d/50-sfduo-no-llmnr.conf" <<'RESOLVED'
+[Resolve]
+LLMNR=no
+MulticastDNS=no
+RESOLVED
 cat > "$PKG/usr/lib/systemd/system/sfduo-lid.service" <<'UNIT'
 [Unit]
 Description=sfduo: fold sensor (GPIO 121) to SW_LID bridge
