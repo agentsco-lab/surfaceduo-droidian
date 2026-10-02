@@ -350,6 +350,21 @@ esac
 exit 0
 SLEEP
 chmod 755 "$PKG/usr/lib/systemd/system-sleep/sfduo-rcu"
+# The wakeup count saved before sleeping, as Android's suspend does
+# (2026-10-02): systemd-sleep writes /sys/power/state straight, and then the
+# kernel gives a sleep up only for a wakeup interrupt at its very end - the
+# lid opened, or the shell's wakelock taken, during the way in lost to it
+# (the screen lit, went dark with the phone, came back: a blink). With the
+# count saved, any wakeup event after it makes the kernel give the sleep up
+# at once. Reading the count waits while a wakeup source is active: given a
+# second, and skipped then (the sleep goes on as before).
+cat > "$PKG/usr/lib/systemd/system-sleep/sfduo-wakeup-count" <<'SLEEP'
+#!/bin/sh
+[ "$1" = pre ] || exit 0
+C=$(timeout 1 cat /sys/power/wakeup_count 2>/dev/null) && echo "$C" > /sys/power/wakeup_count 2>/dev/null
+exit 0
+SLEEP
+chmod 755 "$PKG/usr/lib/systemd/system-sleep/sfduo-wakeup-count"
 
 # Panels re-init at resume and can reset their DCS brightness register
 # to hardware default (max) while gsd-power still holds the user value -
