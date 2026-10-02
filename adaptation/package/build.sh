@@ -306,7 +306,11 @@ case "$1" in
         echo none > $SSUSB/mode 2>/dev/null
         ;;
     post)
-        echo peripheral > $SSUSB/mode 2>/dev/null
+        # "peripheral" here tells msm-dwc3 a cable is in (its VBUS session):
+        # written with none in, the controller sat in a session of its own,
+        # and the cable plugged in later went unseen until plugged again.
+        # Without a cable it is left to the cable's own event.
+        [ "$(cat /sys/class/power_supply/usb/present 2>/dev/null)" = 1 ] && echo peripheral > $SSUSB/mode 2>/dev/null
         sleep 1
         UDC=$(cat /run/sfduo-udc-saved 2>/dev/null)
         [ -n "$UDC" ] && echo "$UDC" > $G/UDC 2>/dev/null
