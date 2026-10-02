@@ -328,6 +328,28 @@ esac
 exit 0
 SLEEP
 chmod 755 "$PKG/usr/lib/systemd/system-sleep/sfduo-usb"
+# Expedited RCU for the way into sleep only (2026-10-02, measured with the
+# power:suspend_resume and cpuhp trace events): Android's init leaves
+# rcu_normal=1 after boot, and each core's sched_cpu_deactivate then waited
+# 3-6 s for a grace period - the seven cores 34 s of a 43 s way into sleep,
+# while a lid opened in it waited for the end. Expedited it is 0.06 s and
+# the whole way some 2 s. Back to normal after: expedited grace periods
+# poke every core, which costs while awake.
+cat > "$PKG/usr/lib/systemd/system-sleep/sfduo-rcu" <<'SLEEP'
+#!/bin/sh
+case "$1" in
+    pre)
+        echo 0 > /sys/kernel/rcu_normal 2>/dev/null
+        echo 1 > /sys/kernel/rcu_expedited 2>/dev/null
+        ;;
+    post)
+        echo 0 > /sys/kernel/rcu_expedited 2>/dev/null
+        echo 1 > /sys/kernel/rcu_normal 2>/dev/null
+        ;;
+esac
+exit 0
+SLEEP
+chmod 755 "$PKG/usr/lib/systemd/system-sleep/sfduo-rcu"
 
 # Panels re-init at resume and can reset their DCS brightness register
 # to hardware default (max) while gsd-power still holds the user value -
@@ -728,6 +750,11 @@ cat > "$PKG/usr/local/sbin/sfduo-lid-daemon" <<'LID'
 # edges are lost while the system sleeps, so state is reconciled, not
 # just edge-triggered (unfold-while-asleep used to leave the system
 # convinced the lid was still closed).
+#
+# With the boot image's DTB declaring the sensor as gpio-keys (input
+# "Surface Duo Lid", a wakeup source: opening wakes the phone) the kernel
+# gives SW_LID itself and holds the GPIO: then the lid is read from that
+# device, no switch of our own is made, and the rest is done as before.
 import os, struct, fcntl, select, subprocess, time
 
 GPIO = "/sys/class/gpio/gpio121"
@@ -746,13 +773,31 @@ def setup_gpio():
     with open(GPIO + "/edge", "w") as f:
         f.write("both")
 
-def make_uinput():
+KERNEL_LID = "Surface Duo Lid"
+
+def kernel_lid():
+    """The kernel's lid switch (gpio-keys from the DTB): its event node."""
+    for d in sorted(os.listdir("/sys/class/input")):
+        try:
+            with open("/sys/class/input/%s/name" % d) as f:
+                if f.read().strip() != KERNEL_LID:
+                    continue
+        except OSError:
+            continue
+        for e in os.listdir("/sys/class/input/" + d):
+            if e.startswith("event"):
+                return "/dev/input/" + e
+    return None
+
+def make_uinput(lid=True):
     fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
-    fcntl.ioctl(fd, UI_SET_EVBIT, EV_SW)
-    fcntl.ioctl(fd, UI_SET_SWBIT, SW_LID)
+    if lid:
+        fcntl.ioctl(fd, UI_SET_EVBIT, EV_SW)
+        fcntl.ioctl(fd, UI_SET_SWBIT, SW_LID)
     fcntl.ioctl(fd, UI_SET_EVBIT, EV_KEY)
     fcntl.ioctl(fd, UI_SET_KEYBIT, KEY_WAKEUP)
-    dev = struct.pack("80sHHHHi", b"Surface Duo Lid Switch", 0x19, 0, 0, 0, 0)
+    name = b"Surface Duo Lid Switch" if lid else b"Surface Duo Lid Wakeup"
+    dev = struct.pack("80sHHHHi", name, 0x19, 0, 0, 0, 0)
     dev += b"\x00" * (64 * 4 * 4)
     os.write(fd, dev)
     fcntl.ioctl(fd, UI_DEV_CREATE)
@@ -845,28 +890,58 @@ def screens_on(fd):
     restore_brightness()
     display_power(0)
 
-def main():
-    setup_gpio()
-    ufd = make_uinput()
-    vfd = os.open(GPIO + "/value", os.O_RDONLY)
+EVIOCGSW_8 = 0x8008451b         # EVIOCGSW(8): the switches' state
+EVENT = struct.Struct("llHHi")
 
-    def read_val():
-        os.lseek(vfd, 0, os.SEEK_SET)
-        return int(os.read(vfd, 8).strip())
+def main():
+    node = kernel_lid()
+    if node:
+        # The kernel's switch: its state asked, its events read (debounced
+        # in the kernel); 1 is open, as the GPIO's value.
+        ufd = make_uinput(lid=False)
+        efd = os.open(node, os.O_RDONLY | os.O_NONBLOCK)
+
+        def read_val():
+            buf = bytearray(8)
+            fcntl.ioctl(efd, EVIOCGSW_8, buf)
+            return 0 if buf[0] & (1 << SW_LID) else 1
+
+        def wait():
+            po.poll(2000)
+            try:
+                while os.read(efd, EVENT.size * 64):
+                    pass
+            except BlockingIOError:
+                pass
+        po = select.poll()
+        po.register(efd, select.POLLIN)
+    else:
+        setup_gpio()
+        ufd = make_uinput()
+        vfd = os.open(GPIO + "/value", os.O_RDONLY)
+
+        def read_val():
+            os.lseek(vfd, 0, os.SEEK_SET)
+            return int(os.read(vfd, 8).strip())
+
+        def wait():
+            po.poll(2000)          # edge OR 2s reconcile tick
+            time.sleep(0.05)       # debounce the magnet bounce
+        po = select.poll()
+        po.register(vfd, select.POLLPRI | select.POLLERR)
 
     last = read_val()
-    emit_lid(ufd, last == 0)
-    po = select.poll()
-    po.register(vfd, select.POLLPRI | select.POLLERR)
+    if not node:
+        emit_lid(ufd, last == 0)
     lit = 0                    # ticks the panels have been lit while closed
     while True:
-        po.poll(2000)          # edge OR 2s reconcile tick
-        time.sleep(0.05)       # debounce the magnet bounce
+        wait()
         val = read_val()
         if val != last:
             last = val
             lit = 0
-            emit_lid(ufd, val == 0)
+            if not node:
+                emit_lid(ufd, val == 0)
             if val == 1:
                 screens_on(ufd)
             else:
