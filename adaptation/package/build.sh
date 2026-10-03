@@ -577,6 +577,13 @@ SFW
 # of sensorfwd never started it again - rotation and the light sensor gone
 # until a reboot (item-tracker #83, checked 2026-10-03 with kill -9). Pulled
 # in on each start of sensorfwd, the automatic restart included.
+# The journal: without a cap journald keeps 10 % of the filesystem (1.5 GB
+# seen on 2026-10-03, 809 MB of an 8 GB rootfs before; item-tracker #92).
+# 500 MB: a busy day of debugging fills ~200 MB, and past boots are what
+# debugging reads; on the 90 GB rootfs it costs nothing.
+mkdir -p "$PKG/usr/lib/systemd/journald.conf.d"
+printf '[Journal]\nSystemMaxUse=500M\n' > "$PKG/usr/lib/systemd/journald.conf.d/60-sfduo-size.conf"
+
 mkdir -p "$PKG/etc/systemd/system/sensorfwd.service.d"
 printf '[Unit]\nWants=iio-sensor-proxy.service\n' \
     > "$PKG/etc/systemd/system/sensorfwd.service.d/60-sfduo-sensor-proxy.conf"
