@@ -32,6 +32,12 @@ session bus, as org.sfduo.Posture at /org/sfduo/Posture:
                       user, 9 with the right one
     Facing   string   back to back, the panel facing the user: left or right;
                       empty otherwise
+                      (Surface and Facing only with SFDUO_POSTURE_SURFACE=1)
+
+Each sensorfw session connects its data socket (/run/sensord.sock) and
+drains it: a session that does not within ten seconds is taken for lost and
+its sensor stopped - the hinge's value froze ten seconds after the start, and
+the dock stopped following the hinge.
 
 PropertiesChanged carries every change. The dock, the fold effect and the
 phone mode read these instead of talking to sensorfw themselves (#55).
@@ -40,6 +46,9 @@ While the display is off it reads nothing: the sensor is stopped and the
 polling with it, and both start again as the display lights up (#159).
 """
 import math
+import os
+import socket
+import struct
 import sys
 import time
 
@@ -49,6 +58,10 @@ gi.require_version("GLib", "2.0")
 from gi.repository import Gio, GLib  # noqa: E402
 
 SENSORFW = "com.nokia.SensorService"
+# sensorfw's data socket: a session that does not connect to it within ten
+# seconds of requestSensor is taken for lost - stopped and released - and
+# its sensor's value is frozen from then on.
+SENSORFW_SOCKET = "/run/sensord.sock"
 SENSOR_MANAGER = "/SensorManager"
 HINGE_PATH = "/SensorManager/hingesensor"
 HINGE_IFACE = "local.HingeSensor"
@@ -60,6 +73,9 @@ SURFACE_EVERY = 4             # its value read every this many polls
 # Started without an interval it reports once and never again: asked for
 # one, it reports each change.
 SURFACE_INTERVAL_MS = 100
+# Read only when asked (SFDUO_POSTURE_SURFACE=1): nothing uses it yet (#117
+# parked), and it costs the SLPI a sensor and this daemon a poll.
+READ_SURFACE = os.environ.get("SFDUO_POSTURE_SURFACE") == "1"
 
 BUS_NAME = "org.sfduo.Posture"
 OBJECT_PATH = "/org/sfduo/Posture"
@@ -139,6 +155,8 @@ class Posture:
         self.system = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
         self.session = Gio.bus_get_sync(Gio.BusType.SESSION, None)
         self.sensor_session = None
+        self.sockets = []             # the sessions' data sockets, kept open
+        self.reconnecting = None      # the one reconnection waiting, if any
         self.surface_session = None
         self.surface = 0
         self.facing = ""
@@ -167,7 +185,7 @@ class Posture:
         self.system.signal_subscribe("org.freedesktop.DBus", "org.freedesktop.DBus",
                                      "NameOwnerChanged", "/org/freedesktop/DBus", SENSORFW,
                                      Gio.DBusSignalFlags.NONE,
-                                     lambda *_a: GLib.timeout_add(1500, self._connect))
+                                     lambda *_a: self._reconnect(1500))
         # 25 readings a second through the system bus, three processes woken
         # for each and the SLPI sensor running: all night long with the phone
         # closed, 14 % of a core and no deep idle for the CPUs (#159). Nothing
@@ -195,7 +213,20 @@ class Posture:
 
     # ---- sensorfw --------------------------------------------------------
 
+    def _reconnect(self, ms):
+        """Connect again in a while - once, however many readings failed or
+        the name changed hands meanwhile."""
+        if self.reconnecting is None:
+            self.reconnecting = GLib.timeout_add(ms, self._connect)
+
     def _connect(self):
+        self.reconnecting = None
+        # The old sessions' sockets closed: sensorfw lets those sessions go.
+        for sock, watch in self.sockets:
+            GLib.source_remove(watch)     # before the close: a watch on a closed fd spins
+            sock.close()
+        self.sockets = []
+        self.sensor_session = self.surface_session = None
         try:
             self.system.call_sync(SENSORFW, SENSOR_MANAGER, "local.SensorManager", "loadPlugin",
                                   GLib.Variant("(s)", ("hingesensor",)), None,
@@ -204,12 +235,15 @@ class Posture:
                                           "requestSensor", GLib.Variant("(sx)", ("hingesensor", 0)),
                                           None, Gio.DBusCallFlags.NONE, 3000, None)
             self.sensor_session = reply[0]
+            self._attach(self.sensor_session)
             if not self.dark:
                 self._sensor("start")
             log(f"hinge sensor session {self.sensor_session}")
         except GLib.Error as err:
             self.sensor_session = None
             log(f"no hinge sensor yet: {err.message} (is the rebuilt sensorfw installed? sudo sfduo-sensorfw-install)")
+        if not READ_SURFACE:
+            return False
         try:
             self.system.call_sync(SENSORFW, SENSOR_MANAGER, "local.SensorManager", "loadPlugin",
                                   GLib.Variant("(s)", ("posturesensor",)), None,
@@ -218,6 +252,7 @@ class Posture:
                                           "requestSensor", GLib.Variant("(sx)", ("posturesensor", 0)),
                                           None, Gio.DBusCallFlags.NONE, 3000, None)
             self.surface_session = reply[0]
+            self._attach(self.surface_session)
             self.system.call_sync(SENSORFW, SURFACE_PATH, SURFACE_IFACE, "setInterval",
                                   GLib.Variant("(ii)", (self.surface_session, SURFACE_INTERVAL_MS)), None,
                                   Gio.DBusCallFlags.NONE, 3000, None)
@@ -228,6 +263,34 @@ class Posture:
             self.surface_session = None
             log(f"no posture sensor: {err.message} (sensorfw 0.14.8+itemae2 or later)")
         return False
+
+    def _attach(self, session):
+        """Connect the session's data socket, as sensorfw's client library
+        does: it greets with a newline, the session's number goes back. What
+        it then streams is read and dropped - the value is read over D-Bus."""
+        try:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.connect(SENSORFW_SOCKET)
+            sock.settimeout(2)
+            sock.recv(1)
+            sock.sendall(struct.pack("=i", session))
+            sock.setblocking(False)
+        except OSError as err:
+            log(f"session {session}: no data socket: {err}")
+            return
+        def drain(fd, condition):
+            try:
+                if sock.recv(65536):
+                    return True
+            except BlockingIOError:
+                return True
+            except OSError:
+                pass
+            sock.close()                  # sensorfw went away: _connect starts again
+            self.sockets = [(s, w) for s, w in self.sockets if s is not sock]
+            return False
+        watch = GLib.io_add_watch(sock.fileno(), GLib.IO_IN | GLib.IO_HUP | GLib.IO_ERR, drain)
+        self.sockets.append((sock, watch))
 
     def _sensor(self, method):
         """Start or stop the hinge and posture sensors on the SLPI."""
@@ -287,7 +350,7 @@ class Posture:
         except GLib.Error as err:
             log(f"reading failed: {err.message}")
             self.sensor_session = None
-            GLib.timeout_add(2000, self._connect)
+            self._reconnect(2000)
             return
         # (timestamp, degrees) in a variant
         reading = value[0]

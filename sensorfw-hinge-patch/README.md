@@ -38,7 +38,13 @@ rest).
 **Ask for an interval.** Started without one (`setInterval` on the session
 before `start`), the sensor reports once and never again. With 100 ms it
 reports each change. `sfduo-posture` does this, and publishes `Surface` (the
-value) and `Facing` (left or right).
+value) and `Facing` (left or right) - when run with `SFDUO_POSTURE_SURFACE=1`;
+nothing uses them yet.
+
+**Connect the data socket.** sensorfw takes a session whose client has not
+connected `/run/sensord.sock` (and written its session number there) within
+ten seconds of `requestSensor` for lost, and stops its sensor. A client that
+only polls the D-Bus property sees the value freeze after ten seconds.
 
 Map it as the hinge's:
 
