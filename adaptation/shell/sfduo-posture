@@ -6,9 +6,10 @@
 
 The Duo's hinge angle comes from sensorfw on the system bus (the port's
 rebuilt sensorfw, `sfduo-sensorfw-install`): a session to request, a
-sensor to start, a property to poll. It arrives at about 10 Hz in whole
-degrees, in steps of 15 degrees or more when the device is folded briskly,
-and it is a fusion of both halves' accelerometers, gyroscopes and
+sensor to start, and its data socket, where each reading arrives as it is
+made (#140) - no polling: at rest nothing wakes. It arrives at about 10 Hz
+in whole degrees, in steps of 15 degrees or more when the device is folded
+briskly, and it is a fusion of both halves' accelerometers, gyroscopes and
 magnetometers on the SLPI rather than an encoder in the hinge - so the
 readings are honest at rest and coarse in motion.
 
@@ -34,16 +35,19 @@ session bus, as org.sfduo.Posture at /org/sfduo/Posture:
                       empty otherwise
                       (Surface and Facing only with SFDUO_POSTURE_SURFACE=1)
 
-Each sensorfw session connects its data socket (/run/sensord.sock) and
-drains it: a session that does not within ten seconds is taken for lost and
-its sensor stopped - the hinge's value froze ten seconds after the start, and
-the dock stopped following the hinge.
+Each sensorfw session connects its data socket (/run/sensord.sock): a
+session that does not within ten seconds is taken for lost and its sensor
+stopped - the hinge's value froze ten seconds after the start, and the dock
+stopped following the hinge. The socket carries frames of a count and as
+many readings, 16 bytes each: a timestamp (u64, microseconds), the value
+(u32), padding. Asking the D-Bus property 25 times a second instead cost
+8.6 % of a core while the screen was on.
 
 PropertiesChanged carries every change. The dock, the fold effect and the
 phone mode read these instead of talking to sensorfw themselves (#55).
 
-While the display is off it reads nothing: the sensor is stopped and the
-polling with it, and both start again as the display lights up (#159).
+While the display is off it reads nothing: the sensor is stopped, and starts
+again as the display lights up (#159).
 """
 import math
 import os
@@ -69,12 +73,11 @@ SURFACE_PATH = "/SensorManager/posturesensor"
 SURFACE_IFACE = "local.PostureSensor"
 # Microsoft's posture: back to back, which panel faces the user.
 FACING = {11: "left", 9: "right"}
-SURFACE_EVERY = 4             # its value read every this many polls
 # Started without an interval it reports once and never again: asked for
 # one, it reports each change.
 SURFACE_INTERVAL_MS = 100
 # Read only when asked (SFDUO_POSTURE_SURFACE=1): nothing uses it yet (#117
-# parked), and it costs the SLPI a sensor and this daemon a poll.
+# parked), and it costs the SLPI a sensor.
 READ_SURFACE = os.environ.get("SFDUO_POSTURE_SURFACE") == "1"
 
 BUS_NAME = "org.sfduo.Posture"
@@ -85,7 +88,7 @@ IFACE = "org.sfduo.Posture"
 DISPLAY_CONFIG = "org.gnome.Mutter.DisplayConfig"
 DISPLAY_CONFIG_PATH = "/org/gnome/Mutter/DisplayConfig"
 
-POLL_MS = 40                  # faster than the sensor changes: notice a change sooner
+READING = struct.Struct("=QI4x")  # sensorfw's TimedUnsigned on the socket
 FRAME_MS = 16                 # the estimate's own clock while it moves
 # A reading every hundred milliseconds, in whole degrees, fifteen at a time
 # when the hinge is moving. Three ways to turn that into motion, measured
@@ -160,7 +163,6 @@ class Posture:
         self.surface_session = None
         self.surface = 0
         self.facing = ""
-        self.polls = 0
         self.raw = None
         self.raw_at = 0.0
         self.angle = None             # where the hinge is, carried between readings
@@ -172,7 +174,6 @@ class Posture:
         self.moving = False
         self.props = {}
         self.registration = None
-        self.poller = None
         self.dark = False             # the display is off: nothing is read
         self.fresh = False            # the first reading after the dark stands as it is
 
@@ -209,7 +210,7 @@ class Posture:
             pass                      # no shell yet: taken as on
         self._connect()
         if not self.dark:
-            self.poller = GLib.timeout_add(POLL_MS, self._poll)
+            self._read_once()
 
     # ---- sensorfw --------------------------------------------------------
 
@@ -235,7 +236,7 @@ class Posture:
                                           "requestSensor", GLib.Variant("(sx)", ("hingesensor", 0)),
                                           None, Gio.DBusCallFlags.NONE, 3000, None)
             self.sensor_session = reply[0]
-            self._attach(self.sensor_session)
+            self._attach(self.sensor_session, self._on_degrees)
             if not self.dark:
                 self._sensor("start")
             log(f"hinge sensor session {self.sensor_session}")
@@ -252,7 +253,7 @@ class Posture:
                                           "requestSensor", GLib.Variant("(sx)", ("posturesensor", 0)),
                                           None, Gio.DBusCallFlags.NONE, 3000, None)
             self.surface_session = reply[0]
-            self._attach(self.surface_session)
+            self._attach(self.surface_session, self._on_surface)
             self.system.call_sync(SENSORFW, SURFACE_PATH, SURFACE_IFACE, "setInterval",
                                   GLib.Variant("(ii)", (self.surface_session, SURFACE_INTERVAL_MS)), None,
                                   Gio.DBusCallFlags.NONE, 3000, None)
@@ -264,10 +265,10 @@ class Posture:
             log(f"no posture sensor: {err.message} (sensorfw 0.14.8+itemae2 or later)")
         return False
 
-    def _attach(self, session):
+    def _attach(self, session, on_value):
         """Connect the session's data socket, as sensorfw's client library
-        does: it greets with a newline, the session's number goes back. What
-        it then streams is read and dropped - the value is read over D-Bus."""
+        does: it greets with a newline, the session's number goes back. Then
+        each frame's last reading goes to `on_value`."""
         try:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.connect(SENSORFW_SOCKET)
@@ -278,9 +279,27 @@ class Posture:
         except OSError as err:
             log(f"session {session}: no data socket: {err}")
             return
+        pending = bytearray()
+
         def drain(fd, condition):
             try:
-                if sock.recv(65536):
+                data = sock.recv(65536)
+                if data:
+                    pending.extend(data)
+                    last = None
+                    while len(pending) >= 4:
+                        count = struct.unpack_from("=I", pending)[0]
+                        end = 4 + READING.size * count
+                        if count > 1000:          # out of step: start over
+                            pending.clear()
+                            break
+                        if len(pending) < end:
+                            break
+                        if count:
+                            last = READING.unpack_from(pending, end - READING.size)[1]
+                        del pending[:end]
+                    if last is not None:
+                        on_value(last)
                     return True
             except BlockingIOError:
                 return True
@@ -317,9 +336,6 @@ class Posture:
             return
         self.dark = dark
         if dark:
-            if self.poller is not None:
-                GLib.source_remove(self.poller)
-                self.poller = None
             self._sensor("stop")
             log("display off: not reading the hinge")
             return
@@ -327,22 +343,17 @@ class Posture:
         # reading is where it is, not a place to glide to from the old one.
         self.fresh = True
         self._sensor("start")
-        self._poll()
-        self.poller = GLib.timeout_add(POLL_MS, self._poll)
+        self._read_once()
         log("display on: reading the hinge")
 
-    def _poll(self):
-        self.polls += 1
-        if self.surface_session is not None and self.polls % SURFACE_EVERY == 0:
-            self.system.call(SENSORFW, SURFACE_PATH, "org.freedesktop.DBus.Properties", "Get",
-                             GLib.Variant("(ss)", (SURFACE_IFACE, "posture")), None,
-                             Gio.DBusCallFlags.NONE, 500, None, self._on_surface)
+    def _read_once(self):
+        """The hinge's value asked for once (at the start, and as the display
+        lights: the socket brings only changes)."""
         if self.sensor_session is None:
-            return True
+            return
         self.system.call(SENSORFW, HINGE_PATH, "org.freedesktop.DBus.Properties", "Get",
                          GLib.Variant("(ss)", (HINGE_IFACE, "hinge")), None,
                          Gio.DBusCallFlags.NONE, 500, None, self._on_reading)
-        return True
 
     def _on_reading(self, conn, result):
         try:
@@ -354,7 +365,9 @@ class Posture:
             return
         # (timestamp, degrees) in a variant
         reading = value[0]
-        degrees = int(reading[1]) if isinstance(reading, tuple) else int(reading)
+        self._on_degrees(int(reading[1]) if isinstance(reading, tuple) else int(reading))
+
+    def _on_degrees(self, degrees):
         now = time.monotonic()
         if self.dark:
             return                            # a reading asked for before the dark
@@ -392,13 +405,7 @@ class Posture:
         self._publish({"Raw": degrees})
         self._start_clock()
 
-    def _on_surface(self, conn, result):
-        try:
-            value = conn.call_finish(result)
-        except GLib.Error:
-            return                            # the hinge's reading reconnects both
-        reading = value[0]
-        surface = int(reading[1]) if isinstance(reading, tuple) else int(reading)
+    def _on_surface(self, surface):
         if surface == self.surface:
             return
         self.surface = surface
