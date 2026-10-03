@@ -572,6 +572,15 @@ SFW
 # the postinst appends the mapping to the real config (verified working:
 # live hinge degrees over DBus 2026-07-11).
 
+# iio-sensor-proxy (Droidian's hadess-sensorfw-proxy drop-in) is BindsTo=
+# sensorfwd: a crash of sensorfwd stopped it, and systemd's automatic restart
+# of sensorfwd never started it again - rotation and the light sensor gone
+# until a reboot (item-tracker #83, checked 2026-10-03 with kill -9). Pulled
+# in on each start of sensorfwd, the automatic restart included.
+mkdir -p "$PKG/etc/systemd/system/sensorfwd.service.d"
+printf '[Unit]\nWants=iio-sensor-proxy.service\n' \
+    > "$PKG/etc/systemd/system/sensorfwd.service.d/60-sfduo-sensor-proxy.conf"
+
 # Tame vendor daemons that hurt the system (findings 2026-07-11):
 # adsprpcd x2 spin at 33% CPU each on a fastrpc ioctl (0xc00c5211) our
 # 4.14 kernel does not implement, flooding dmesg ~40 msg/s. ctl.stop is
