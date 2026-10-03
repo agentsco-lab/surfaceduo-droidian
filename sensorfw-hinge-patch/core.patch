@@ -51,6 +51,18 @@ index b2dc1ef..1e26712 100644
  /usr/lib/*/sensord-qt6/libtemperaturesensor-qt6.so
 +/usr/lib/*/sensord-qt6/libhingesensor-qt6.so
 +/usr/lib/*/sensord-qt6/libposturesensor-qt6.so
+diff --git a/qt-api/socketreader.h b/qt-api/socketreader.h
+index 10c241a..440ba55 100644
+--- a/qt-api/socketreader.h
++++ b/qt-api/socketreader.h
+@@ -27,6 +27,7 @@
+ #ifndef SOCKETREADER_H
+ #define SOCKETREADER_H
+ 
++#include <QDebug>
+ #include <QObject>
+ #include <QLocalSocket>
+ #include <QVector>
 diff --git a/sensors/sensors.pro b/sensors/sensors.pro
 index 6afdb7d..d2a052d 100644
 --- a/sensors/sensors.pro

@@ -19,6 +19,27 @@ first four values at each change (`journalctl -u sensorfwd`, "Surface
 posture:"), to be read against the ways the Duo is held - Microsoft does not
 publish what they mean.
 
+What its values mean, read on the device (2026-10-03), the first of the four:
+
+| value | the Duo |
+|---|---|
+| 0 | closed |
+| 3 | open as a book or a laptop (~100°) |
+| 5 | flat |
+| 7 | closing |
+| 13 | on the way to back to back |
+| 11 | back to back, the **left** panel facing the user |
+| 9 | back to back, the **right** panel facing the user |
+
+The third value repeats the facing as flags (32+2 for left, 32+1 for right;
+12 in a turn); the fourth looks like a confidence (0 in a turn, 0.5-1 at
+rest).
+
+**Ask for an interval.** Started without one (`setInterval` on the session
+before `start`), the sensor reports once and never again. With 100 ms it
+reports each change. `sfduo-posture` does this, and publishes `Surface` (the
+value) and `Facing` (left or right).
+
 Map it as the hinge's:
 
 ```
@@ -46,9 +67,24 @@ cd sensorfw
 git apply /path/to/core.patch
 cp -r /path/to/new-files/* .
 dpkg-buildpackage -us -uc -b       # arm64; a qemu-aarch64 chroot of the
-                                   # droidian rootfs works (~1.5 h), needs
+                                   # droidian rootfs works but is slow, needs
                                    # debhelper + qt6 build-deps installed
 ```
+
+Built on the Duo itself (a chroot of a copy of its rootfs, 2026-10-03), it
+takes about half an hour, and two traps show up:
+
+- A newer GCC rejects `qt-api/socketreader.h` without `<QDebug>`. The include
+  is in `core.patch`.
+- Under the Duo's 4.14 kernel, `qmake6 -install qinstall` fails with "Invalid
+  argument" when it copies a file, so `make install` and `debian/rules`
+  stop. In the build chroot, use a stand-in:
+  - a `qinstall-shim` that does the same with `install -D` (and `cp -a` for
+    directories);
+  - run the build with `MAKEFLAGS="QINSTALL=qinstall-shim
+    QINSTALL_PROGRAM=qinstall-shim-exe"`;
+  - point the direct call in `debian/rules` at the shim.
+  This is a build-machine problem only; the packages are the same.
 
 ## Install traps (all hit in practice)
 

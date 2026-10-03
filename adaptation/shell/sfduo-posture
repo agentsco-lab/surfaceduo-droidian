@@ -24,6 +24,14 @@ session bus, as org.sfduo.Posture at /org/sfduo/Posture:
                       hysteresis, and only after two readings agree
     Moving   boolean  the hinge is turning (over 20 degrees a second)
     Velocity double   degrees a second, signed: positive opening
+    Surface  uint32   Microsoft's own posture (the sensors HAL's vendor type
+                      33171009, sensorfw's posturesensor): read against the
+                      ways the Duo is held (#116) - 0 closed, 3 open as a book
+                      or a laptop, 5 flat, 7 closing, 13 on the way to back to
+                      back, 11 back to back with the left panel facing the
+                      user, 9 with the right one
+    Facing   string   back to back, the panel facing the user: left or right;
+                      empty otherwise
 
 PropertiesChanged carries every change. The dock, the fold effect and the
 phone mode read these instead of talking to sensorfw themselves (#55).
@@ -44,6 +52,14 @@ SENSORFW = "com.nokia.SensorService"
 SENSOR_MANAGER = "/SensorManager"
 HINGE_PATH = "/SensorManager/hingesensor"
 HINGE_IFACE = "local.HingeSensor"
+SURFACE_PATH = "/SensorManager/posturesensor"
+SURFACE_IFACE = "local.PostureSensor"
+# Microsoft's posture: back to back, which panel faces the user.
+FACING = {11: "left", 9: "right"}
+SURFACE_EVERY = 4             # its value read every this many polls
+# Started without an interval it reports once and never again: asked for
+# one, it reports each change.
+SURFACE_INTERVAL_MS = 100
 
 BUS_NAME = "org.sfduo.Posture"
 OBJECT_PATH = "/org/sfduo/Posture"
@@ -98,6 +114,8 @@ INTROSPECTION = """
     <property name="Posture" type="s" access="read"/>
     <property name="Moving" type="b" access="read"/>
     <property name="Velocity" type="d" access="read"/>
+    <property name="Surface" type="u" access="read"/>
+    <property name="Facing" type="s" access="read"/>
   </interface>
 </node>
 """
@@ -121,6 +139,10 @@ class Posture:
         self.system = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
         self.session = Gio.bus_get_sync(Gio.BusType.SESSION, None)
         self.sensor_session = None
+        self.surface_session = None
+        self.surface = 0
+        self.facing = ""
+        self.polls = 0
         self.raw = None
         self.raw_at = 0.0
         self.angle = None             # where the hinge is, carried between readings
@@ -188,18 +210,37 @@ class Posture:
         except GLib.Error as err:
             self.sensor_session = None
             log(f"no hinge sensor yet: {err.message} (is the rebuilt sensorfw installed? sudo sfduo-sensorfw-install)")
+        try:
+            self.system.call_sync(SENSORFW, SENSOR_MANAGER, "local.SensorManager", "loadPlugin",
+                                  GLib.Variant("(s)", ("posturesensor",)), None,
+                                  Gio.DBusCallFlags.NONE, 3000, None)
+            reply = self.system.call_sync(SENSORFW, SENSOR_MANAGER, "local.SensorManager",
+                                          "requestSensor", GLib.Variant("(sx)", ("posturesensor", 0)),
+                                          None, Gio.DBusCallFlags.NONE, 3000, None)
+            self.surface_session = reply[0]
+            self.system.call_sync(SENSORFW, SURFACE_PATH, SURFACE_IFACE, "setInterval",
+                                  GLib.Variant("(ii)", (self.surface_session, SURFACE_INTERVAL_MS)), None,
+                                  Gio.DBusCallFlags.NONE, 3000, None)
+            if not self.dark:
+                self._sensor("start")
+            log(f"posture sensor session {self.surface_session}")
+        except GLib.Error as err:
+            self.surface_session = None
+            log(f"no posture sensor: {err.message} (sensorfw 0.14.8+itemae2 or later)")
         return False
 
     def _sensor(self, method):
-        """Start or stop the hinge sensor on the SLPI."""
-        if self.sensor_session is None:
-            return
-        try:
-            self.system.call_sync(SENSORFW, HINGE_PATH, HINGE_IFACE, method,
-                                  GLib.Variant("(i)", (self.sensor_session,)), None,
-                                  Gio.DBusCallFlags.NONE, 3000, None)
-        except GLib.Error as err:
-            log(f"{method}: {err.message}")
+        """Start or stop the hinge and posture sensors on the SLPI."""
+        for session, path, iface in ((self.sensor_session, HINGE_PATH, HINGE_IFACE),
+                                     (self.surface_session, SURFACE_PATH, SURFACE_IFACE)):
+            if session is None:
+                continue
+            try:
+                self.system.call_sync(SENSORFW, path, iface, method,
+                                      GLib.Variant("(i)", (session,)), None,
+                                      Gio.DBusCallFlags.NONE, 3000, None)
+            except GLib.Error as err:
+                log(f"{method} {path}: {err.message}")
 
     # ---- the display ---------------------------------------------------------
 
@@ -228,6 +269,11 @@ class Posture:
         log("display on: reading the hinge")
 
     def _poll(self):
+        self.polls += 1
+        if self.surface_session is not None and self.polls % SURFACE_EVERY == 0:
+            self.system.call(SENSORFW, SURFACE_PATH, "org.freedesktop.DBus.Properties", "Get",
+                             GLib.Variant("(ss)", (SURFACE_IFACE, "posture")), None,
+                             Gio.DBusCallFlags.NONE, 500, None, self._on_surface)
         if self.sensor_session is None:
             return True
         self.system.call(SENSORFW, HINGE_PATH, "org.freedesktop.DBus.Properties", "Get",
@@ -282,6 +328,25 @@ class Posture:
         self._update_moving(now)
         self._publish({"Raw": degrees})
         self._start_clock()
+
+    def _on_surface(self, conn, result):
+        try:
+            value = conn.call_finish(result)
+        except GLib.Error:
+            return                            # the hinge's reading reconnects both
+        reading = value[0]
+        surface = int(reading[1]) if isinstance(reading, tuple) else int(reading)
+        if surface == self.surface:
+            return
+        self.surface = surface
+        changed = {"Surface": surface}
+        # Between two facings (13, the turn) the last one stands.
+        facing = FACING.get(surface, self.facing if surface == 13 else "")
+        if facing != self.facing:
+            self.facing = facing
+            changed["Facing"] = facing
+            log(f"facing: {facing or 'none'}")
+        self._publish(changed)
 
     # ---- gliding to the last reading ---------------------------------------
 
@@ -343,6 +408,10 @@ class Posture:
             return GLib.Variant("b", self.moving)
         if name == "Velocity":
             return GLib.Variant("d", self.velocity)
+        if name == "Surface":
+            return GLib.Variant("u", self.surface)
+        if name == "Facing":
+            return GLib.Variant("s", self.facing)
         return None
 
     def _publish(self, changed):
@@ -350,7 +419,8 @@ class Posture:
             self.props[key] = value
         variants = {}
         for key, value in changed.items():
-            sig = {"Angle": "d", "Raw": "u", "Posture": "s", "Moving": "b", "Velocity": "d"}[key]
+            sig = {"Angle": "d", "Raw": "u", "Posture": "s", "Moving": "b", "Velocity": "d",
+                   "Surface": "u", "Facing": "s"}[key]
             variants[key] = GLib.Variant(sig, value)
         try:
             self.session.emit_signal(None, OBJECT_PATH, "org.freedesktop.DBus.Properties",
