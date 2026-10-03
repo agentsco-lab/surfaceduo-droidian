@@ -1,6 +1,9 @@
-sensorfw-qt6 (0.14.8+sfduo1) trixie; urgency=medium
+sensorfw-qt6 (0.14.8+itemae2) trixie; urgency=medium
 
-  * Add hinge angle sensor (Android sensor type 36) for Surface Duo:
-    hybrishingeadaptor + hingesensor plugin.
+  * Add Microsoft's posture sensor (vendor type 33171009) for Surface Duo:
+    hybrispostureadaptor + posturesensor plugin; its values logged at each
+    change while their meaning is found.
+  * Hinge angle sensor (Android sensor type 36): hybrishingeadaptor +
+    hingesensor plugin.
 
- -- Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>  Sat, 11 Jul 2026 16:00:00 +0300
+ -- Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>  Sat, 03 Oct 2026 12:40:00 +0300

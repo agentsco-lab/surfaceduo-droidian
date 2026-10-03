@@ -1,4 +1,4 @@
-# Hinge-angle sensor for sensorfw (Surface Duo posture)
+# Hinge-angle and posture sensors for sensorfw (Surface Duo)
 
 The Duo's hinge angle (0-360°, `android.sensor.hinge_angle`, type 36,
 served by the MS `sns_fold` sensor on the SLPI) is not a sensor type
@@ -8,9 +8,27 @@ sensorfw knows about. This patch adds a `hybrishingeadaptor` +
 Verified on device 2026-07-11: fold the device and degrees stream in
 real time (146→167→152→120→156° in one test).
 
+## Microsoft's posture sensor (added 2026-10-03, 0.14.8+itemae2)
+
+The sensors HAL also serves Microsoft's own **Posture** sensor (vendor type
+33171009, 17 postures, which panel faces the user among them - item-tracker
+#116), and sensorfw ignores vendor types. A `hybrispostureadaptor` +
+`posturesensor` pair, built as the hinge's, publishes its first value over
+DBus (`/SensorManager/posturesensor`, `local.PostureSensor`) and logs the
+first four values at each change (`journalctl -u sensorfwd`, "Surface
+posture:"), to be read against the ways the Duo is held - Microsoft does not
+publish what they mean.
+
+Map it as the hinge's:
+
+```
+postureadaptor = hybrispostureadaptor
+```
+
 ## What's here
 
-- `hinge-core.patch` - changes to existing sensorfw files:
+- `core.patch` - changes to existing sensorfw files (the hinge's and the
+  posture's):
   `core/hybrisadaptor.{h,cpp}` (SENSOR_TYPE_HINGE_ANGLE), registration
   in `adaptors/adaptors.pro` + `sensors/sensors.pro`, and the new
   plugin `.so`s added to `debian/libsensorfw-qt6-plugins.install`.
@@ -25,7 +43,7 @@ git clone https://github.com/sailfishos/sensorfw.git   # droidian uses the qt6 b
 # use the same source the droidian package was built from:
 #   apt source sensorfw-qt6      (on the device or any droidian chroot)
 cd sensorfw
-git apply /path/to/hinge-core.patch
+git apply /path/to/core.patch
 cp -r /path/to/new-files/* .
 dpkg-buildpackage -us -uc -b       # arm64; a qemu-aarch64 chroot of the
                                    # droidian rootfs works (~1.5 h), needs

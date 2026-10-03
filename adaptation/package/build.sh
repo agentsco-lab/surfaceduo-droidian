@@ -565,6 +565,7 @@ mkdir -p "$PKG/etc/sensorfw"
 cat > "$PKG/etc/sensorfw/70-sfduo-surfaceduo.conf" <<'SFW'
 [plugins]
 hingeadaptor = hybrishingeadaptor
+postureadaptor = hybrispostureadaptor
 SFW
 # NOTE: sensorfwd runs with -c=/etc/sensorfw/sensord-hybris.conf and reads
 # ONLY that file (no conf.d!) - the 70- file above is documentation-ware;
