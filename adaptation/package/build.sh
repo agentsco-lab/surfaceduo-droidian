@@ -577,6 +577,17 @@ SFW
 # of sensorfwd never started it again - rotation and the light sensor gone
 # until a reboot (item-tracker #83, checked 2026-10-03 with kill -9). Pulled
 # in on each start of sensorfwd, the automatic restart included.
+# Two units that fail at every boot, masked (removing this package removes
+# the links): nfcd waits for Android's NFC HAL, and the Duo 1 has no NFC;
+# lxc-net sets up a NAT bridge for LXC containers, and this kernel has no
+# MASQUERADE target nor an ip6 nat table. The Android container (lxc@android)
+# does not use it - it is on the host's network - and lxc.service only Wants
+# it. A container that wants NAT (Waydroid, item-tracker #133) needs those in
+# the kernel first.
+mkdir -p "$PKG/etc/systemd/system"
+ln -s /dev/null "$PKG/etc/systemd/system/nfcd.service"
+ln -s /dev/null "$PKG/etc/systemd/system/lxc-net.service"
+
 # The journal: without a cap journald keeps 10 % of the filesystem (1.5 GB
 # seen on 2026-10-03, 809 MB of an 8 GB rootfs before; item-tracker #92).
 # 500 MB: a busy day of debugging fills ~200 MB, and past boots are what
