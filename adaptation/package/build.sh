@@ -11,7 +11,7 @@ ACCESS="$HERE/../access"
 SYSTEM="$HERE/../system"
 SHELLDIR="$HERE/../shell"
 BUSYBOX="$ROOT/out/busybox-arm64"
-VER="${1:-0.21.2}"
+VER="${1:-0.21.3}"
 OUT="$ROOT/out"
 PKG="$OUT/pkgroot"
 
@@ -1269,9 +1269,26 @@ Description: Surface Duo 1 adaptation for Droidian (sfduo)
  progresses, touch / wifi / sensor plumbing for the Microsoft Surface Duo 1.
 EOF
 
+# ssh: the droidian user's password is the PIN, four digits, and sshd
+# listens on every network - over Wi-Fi or mobile data it could be guessed
+# in minutes, and sudo takes the same PIN. A password only from the USB
+# link; everywhere else keys only (Cradle's are keys; root was keys only
+# already). Debian's sshd_config includes sshd_config.d first, so these win.
+mkdir -p "$PKG/etc/ssh/sshd_config.d"
+cat > "$PKG/etc/ssh/sshd_config.d/10-item-password-usb-only.conf" <<'SSHD'
+# The PIN is the password, four digits: over Wi-Fi or mobile data it could
+# be guessed. A password only from the USB link; elsewhere keys only.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+Match Address 172.16.42.0/24
+    PasswordAuthentication yes
+SSHD
+
 cat > "$PKG/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
+# sshd takes the USB-only password rule now (it is offline in a chroot)
+if systemctl is-active -q ssh 2>/dev/null && sshd -t 2>/dev/null; then systemctl reload ssh || true; fi
 # migrate off the hand-injected copies (shadow the packaged unit if left)
 rm -f /etc/systemd/system/sfduo-usb.service \
       /etc/systemd/system/multi-user.target.wants/sfduo-usb.service
