@@ -11,7 +11,7 @@ ACCESS="$HERE/../access"
 SYSTEM="$HERE/../system"
 SHELLDIR="$HERE/../shell"
 BUSYBOX="$ROOT/out/busybox-arm64"
-VER="${1:-0.21.0}"
+VER="${1:-0.21.2}"
 OUT="$ROOT/out"
 PKG="$OUT/pkgroot"
 
@@ -1433,78 +1433,59 @@ if id droidian >/dev/null 2>&1; then
             /org/freedesktop/DBus org.freedesktop.DBus.ReloadConfig 2>/dev/null || true
     fi
 fi
-if [ -d /run/systemd/system ]; then
-    # `systemctl enable` reloads the manager every time, and on this kernel a
-    # reload is half a minute (a debug-heavy config: every allocation is
-    # checked). A dozen of them made the install take nine minutes. So:
-    # enable without reloading, reload once, then start.
-    START=""
-    en()     { systemctl --no-reload enable "$@"; }
-    en_now() { systemctl --no-reload enable "$@" && START="$START $*"; }
-    systemctl daemon-reload
-    en sfduo-slot-guard.service || true
-    en_now sfduo-modem.service || true
-    en_now sfduo-modem-watch.service || true
-    en_now sfduo-pen-split.service || true
-    en_now sfduo-boost.service || true
-    en_now sfduo-cpufreq.service || true
-    en_now sfduo-usb.service || true
-    en bluebinder.service bluetooth.service 2>/dev/null || true
-    en sfduo-composer-watchdog.service || true
-    en_now sfduo-lid.service || true
-    en_now sfduo-writeback.timer || true
-    en_now sfduo-wakeup.service || true
-    # at the next boot, not in the middle of an install (#157)
-    en sfduo-grow-rootfs.service || true
+# The same units enabled whether systemd runs or not (an image built in a
+# chroot): `systemctl enable` only makes links. Offline it once enabled a
+# hand-picked few and left wlan, wowlan, lid, wakeup, the composer watchdog,
+# writeback and bluetooth off - the release image came up without wifi,
+# bluebinder failing in a loop for want of an address, and froze ten minutes
+# in (2026-10-04). Only the reload and the starts need a running systemd.
+RUNNING=; [ -d /run/systemd/system ] && RUNNING=1
+# `systemctl enable` reloads the manager every time, and on this kernel a
+# reload is half a minute (a debug-heavy config: every allocation is
+# checked). A dozen of them made the install take nine minutes. So: enable
+# without reloading, reload once, then start.
+START=""
+en()     { systemctl --no-reload enable "$@"; }
+en_now() { systemctl --no-reload enable "$@" && START="$START $*"; }
+[ -n "$RUNNING" ] && systemctl daemon-reload
+en sfduo-slot-guard.service || true
+en_now sfduo-modem.service || true
+en_now sfduo-modem-watch.service || true
+en_now sfduo-pen-split.service || true
+en_now sfduo-boost.service || true
+en_now sfduo-cpufreq.service || true
+en_now sfduo-usb.service || true
+en bluebinder.service bluetooth.service 2>/dev/null || true
+en sfduo-composer-watchdog.service || true
+en_now sfduo-lid.service || true
+en_now sfduo-writeback.timer || true
+en_now sfduo-wakeup.service || true
+# at the next boot, not in the middle of an install (#157)
+en sfduo-grow-rootfs.service || true
+[ -d /usr/lib/sfduo/modules ] && en_now sfduo-wlan.service || true
+[ -e /usr/lib/systemd/system/sfduo-wowlan.service ] && en sfduo-wowlan.service || true
+# sfduo-tame-vendor kills adsprpcd, and sfduo-audio.service is what
+# boots the ADSP afterwards. Measured on hardware: adsprpcd cannot
+# bring the ADSP up on this port at all, so with no starter the
+# daemons just respawn and spin (~24% CPU each) against a subsystem
+# stuck at OFFLINING. Killing them there buys nothing, so the killer
+# only goes in alongside the starter.
+if [ -x /usr/local/sbin/sfduo-audio-up.sh ]; then
+    en sfduo-audio.service || true
+    en_now sfduo-tame-vendor.service || true
+else
+    echo "sfduo: built without audio modules, so there is no ADSP" >&2
+    echo "sfduo: starter. Expect adsprpcd to spin and bluetooth to" >&2
+    echo "sfduo: refuse to start (it would soft-lock the kernel)." >&2
+    echo "sfduo: Build the audio modules and reinstall." >&2
+fi
+if [ -n "$RUNNING" ]; then
     udevadm control --reload 2>/dev/null || true
     udevadm trigger -s backlight -s leds 2>/dev/null || true
-    [ -d /usr/lib/sfduo/modules ] && en_now sfduo-wlan.service || true
-    [ -e /usr/lib/systemd/system/sfduo-wowlan.service ] && en sfduo-wowlan.service || true
-    # sfduo-tame-vendor kills adsprpcd, and sfduo-audio.service is what
-    # boots the ADSP afterwards. Measured on hardware: adsprpcd cannot
-    # bring the ADSP up on this port at all, so with no starter the
-    # daemons just respawn and spin (~24% CPU each) against a subsystem
-    # stuck at OFFLINING. Killing them there buys nothing, so the killer
-    # only goes in alongside the starter.
-    if [ -x /usr/local/sbin/sfduo-audio-up.sh ]; then
-        en sfduo-audio.service || true
-        en_now sfduo-tame-vendor.service || true
-    else
-        echo "sfduo: built without audio modules, so there is no ADSP" >&2
-        echo "sfduo: starter. Expect adsprpcd to spin and bluetooth to" >&2
-        echo "sfduo: refuse to start (it would soft-lock the kernel)." >&2
-        echo "sfduo: Build the audio modules and reinstall." >&2
-    fi
     systemctl daemon-reload
     # --no-block: on a first boot this runs before multi-user.target, and a
     # unit that waits for the modem would hold the whole boot with it.
     for u in $START; do systemctl --no-block start "$u" || true; done
-else
-    ln -sf /usr/lib/systemd/system/sfduo-usb.service \
-       /etc/systemd/system/multi-user.target.wants/sfduo-usb.service
-    ln -sf /usr/lib/systemd/system/sfduo-slot-guard.service \
-       /etc/systemd/system/multi-user.target.wants/sfduo-slot-guard.service
-    ln -sf /usr/lib/systemd/system/sfduo-grow-rootfs.service \
-       /etc/systemd/system/multi-user.target.wants/sfduo-grow-rootfs.service
-    ln -sf /usr/lib/systemd/system/sfduo-modem.service \
-       /etc/systemd/system/multi-user.target.wants/sfduo-modem.service
-    ln -sf /usr/lib/systemd/system/sfduo-modem-watch.service \
-       /etc/systemd/system/multi-user.target.wants/sfduo-modem-watch.service
-    ln -sf /usr/lib/systemd/system/sfduo-pen-split.service \
-       /etc/systemd/system/multi-user.target.wants/sfduo-pen-split.service
-    ln -sf /usr/lib/systemd/system/sfduo-boost.service \
-       /etc/systemd/system/multi-user.target.wants/sfduo-boost.service
-    mkdir -p /etc/systemd/system/graphical.target.wants
-    ln -sf /usr/lib/systemd/system/sfduo-cpufreq.service \
-       /etc/systemd/system/graphical.target.wants/sfduo-cpufreq.service
-    # same pairing rule as above, offline: the ADSP starter and the
-    # adsprpcd killer go in together or not at all
-    if [ -x /usr/local/sbin/sfduo-audio-up.sh ]; then
-        ln -sf /usr/lib/systemd/system/sfduo-audio.service \
-           /etc/systemd/system/multi-user.target.wants/sfduo-audio.service
-        ln -sf /usr/lib/systemd/system/sfduo-tame-vendor.service \
-           /etc/systemd/system/multi-user.target.wants/sfduo-tame-vendor.service
-    fi
 fi
 # What the phone has no use for (#163), turned off - left installed - and
 # once only: a service turned back on by hand stays on through upgrades.

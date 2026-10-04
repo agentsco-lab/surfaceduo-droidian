@@ -90,6 +90,12 @@ ch /usr/local/sbin/sfduo-sensorfw-install || true
 ch dpkg-query -W -f='${Version}\n' sensorfw-qt6 | grep -q itemae || die "sensorfw with the hinge sensor did not go in"
 ch dconf update || true
 
+echo "== the port's services on, as on a phone it was installed on"
+for u in sfduo-wlan.service sfduo-audio.service sfduo-tame-vendor.service sfduo-lid.service sfduo-wakeup.service \
+         sfduo-composer-watchdog.service sfduo-slot-guard.service sfduo-grow-rootfs.service sfduo-usb.service; do
+    ch systemctl is-enabled -q "$u" || die "$u is not enabled in the image: the adaptation's postinst left it off"
+done
+
 echo "== item as the shell (item-switch item, without starting anything)"
 ch systemctl disable phosh.service
 ch systemctl enable item.service item-face.service
