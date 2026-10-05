@@ -211,6 +211,12 @@ class Posture:
         self.session.signal_subscribe(DISPLAY_CONFIG, "org.freedesktop.DBus.Properties",
                                       "PropertiesChanged", DISPLAY_CONFIG_PATH, None,
                                       Gio.DBusSignalFlags.NONE, self._on_display_changed)
+        # The lid opened: reading at once - the display lights a second or
+        # two later (the phone wakes first), and the hinge was read only from
+        # then: Cradle drew the phone shut for seconds after it was opened.
+        self.system.signal_subscribe("org.freedesktop.login1", "org.freedesktop.DBus.Properties",
+                                     "PropertiesChanged", "/org/freedesktop/login1", None,
+                                     Gio.DBusSignalFlags.NONE, self._on_logind_changed)
         # a shell that comes (back) up has its display on
         self.session.signal_subscribe("org.freedesktop.DBus", "org.freedesktop.DBus",
                                       "NameOwnerChanged", "/org/freedesktop/DBus", DISPLAY_CONFIG,
@@ -367,6 +373,25 @@ class Posture:
         mode = params[1].get("PowerSaveMode")
         if mode is not None:
             self._set_dark(mode != 0)
+
+    def _on_logind_changed(self, conn, sender, path, iface, signal, params):
+        if params[1].get("LidClosed") is False and self.dark:
+            log("lid opened: reading the hinge")
+            self._set_dark(False)
+            # Dark again if the display never lit after all (the battery).
+            GLib.timeout_add_seconds(8, self._dark_if_still)
+
+    def _dark_if_still(self):
+        try:
+            mode = self.session.call_sync(DISPLAY_CONFIG, DISPLAY_CONFIG_PATH,
+                                          "org.freedesktop.DBus.Properties", "Get",
+                                          GLib.Variant("(ss)", (DISPLAY_CONFIG, "PowerSaveMode")),
+                                          None, Gio.DBusCallFlags.NONE, 1000, None)[0]
+            if mode != 0:
+                self._set_dark(True)
+        except GLib.Error:
+            pass
+        return False
 
     def _set_dark(self, dark):
         if dark == self.dark:
