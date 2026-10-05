@@ -1272,7 +1272,7 @@ EOF
 # ssh: the droidian user's password is the PIN, four digits, and sshd
 # listens on every network - over Wi-Fi or mobile data it could be guessed
 # in minutes, and sudo takes the same PIN. A password only from the USB
-# link; everywhere else keys only (Hythe's are keys; root was keys only
+# link; everywhere else keys only (Gridbay's are keys; root was keys only
 # already). Debian's sshd_config includes sshd_config.d first, so these win.
 mkdir -p "$PKG/etc/ssh/sshd_config.d"
 cat > "$PKG/etc/ssh/sshd_config.d/10-item-password-usb-only.conf" <<'SSHD'
