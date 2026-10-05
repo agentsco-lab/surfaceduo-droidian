@@ -82,7 +82,7 @@ SURFACE_INTERVAL_MS = 100
 # Read only when asked (SFDUO_POSTURE_SURFACE=1): nothing uses it yet (#117
 # parked), and it costs the SLPI a sensor.
 READ_SURFACE = os.environ.get("SFDUO_POSTURE_SURFACE") == "1"
-# The accelerometer, for which way is down (Cradle draws the phone as it is
+# The accelerometer, for which way is down (Hythe draws the phone as it is
 # held): sensorfw's readings are x, y, z in thousandths of g (floats), ten a
 # second, read only while the display is lit, like the hinge.
 ACCEL_PATH = "/SensorManager/accelerometersensor"
@@ -213,7 +213,7 @@ class Posture:
                                       Gio.DBusSignalFlags.NONE, self._on_display_changed)
         # The lid opened: reading at once - the display lights a second or
         # two later (the phone wakes first), and the hinge was read only from
-        # then: Cradle drew the phone shut for seconds after it was opened.
+        # then: Hythe drew the phone shut for seconds after it was opened.
         self.system.signal_subscribe("org.freedesktop.login1", "org.freedesktop.DBus.Properties",
                                      "PropertiesChanged", "/org/freedesktop/login1", None,
                                      Gio.DBusSignalFlags.NONE, self._on_logind_changed)
