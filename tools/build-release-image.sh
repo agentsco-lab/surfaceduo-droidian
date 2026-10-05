@@ -1,6 +1,6 @@
 #!/bin/bash
 # build-release-image.sh: the release image (item-tracker #153) - what
-# Gridbay puts on userdata for a newcomer, or for Erase and install:
+# item/grid puts on userdata for a newcomer, or for Erase and install:
 # Droidian 102 (a pinned nightly), the port's adaptation and its sensorfw,
 # the shell's Python and GTK bits, item as the shell. Everything the port's
 # install did by hand on the phone (PORT-GUIDE.md: the TWRP inject, the
@@ -14,10 +14,10 @@
 #   sudo tools/build-release-image.sh [ADAPTATION.deb] [ITEM.deb]
 #
 # Out: out/release/<name>/rootfs.img.zst, its sha256s and manifest.json.
-# Not in the image: anyone's ssh key (Gridbay puts the owner's in when it
+# Not in the image: anyone's ssh key (item/grid puts the owner's in when it
 # installs), the host's ssh keys and machine-id (made on the first boot).
 # The PIN stays Droidian's 1234 until item's first start sets one (#148);
-# Gridbay asks for a new one after installing.
+# item/grid asks for a new one after installing.
 set -euo pipefail
 
 die() { echo "build-release-image: $*" >&2; exit 1; }
