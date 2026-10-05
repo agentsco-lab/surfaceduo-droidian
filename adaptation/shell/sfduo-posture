@@ -33,6 +33,9 @@ session bus, as org.sfduo.Posture at /org/sfduo/Posture:
                       user, 9 with the right one
     Facing   string   back to back, the panel facing the user: left or right;
                       empty otherwise
+    Gravity  double[] which way is down: the accelerometer's x, y, z in g
+                      (lying flat face up: about 0, 0, 1), smoothed, told
+                      when it moves by 0.02 g; read while the display is lit
                       (Surface and Facing only with SFDUO_POSTURE_SURFACE=1)
 
 Each sensorfw session connects its data socket (/run/sensord.sock): a
@@ -79,6 +82,15 @@ SURFACE_INTERVAL_MS = 100
 # Read only when asked (SFDUO_POSTURE_SURFACE=1): nothing uses it yet (#117
 # parked), and it costs the SLPI a sensor.
 READ_SURFACE = os.environ.get("SFDUO_POSTURE_SURFACE") == "1"
+# The accelerometer, for which way is down (Cradle draws the phone as it is
+# held): sensorfw's readings are x, y, z in thousandths of g (floats), ten a
+# second, read only while the display is lit, like the hinge.
+ACCEL_PATH = "/SensorManager/accelerometersensor"
+ACCEL_IFACE = "local.AccelerometerSensor"
+ACCEL_INTERVAL_MS = 100
+ACCEL_READING = struct.Struct("=Qfff4x")
+GRAVITY_STEP = 0.02           # g: a smaller change is not told
+GRAVITY_SMOOTH = 0.5          # each reading's share of the smoothed one
 
 BUS_NAME = "org.sfduo.Posture"
 OBJECT_PATH = "/org/sfduo/Posture"
@@ -135,6 +147,7 @@ INTROSPECTION = """
     <property name="Velocity" type="d" access="read"/>
     <property name="Surface" type="u" access="read"/>
     <property name="Facing" type="s" access="read"/>
+    <property name="Gravity" type="ad" access="read"/>
   </interface>
 </node>
 """
@@ -161,6 +174,9 @@ class Posture:
         self.sockets = []             # the sessions' data sockets, kept open
         self.reconnecting = None      # the one reconnection waiting, if any
         self.surface_session = None
+        self.accel_session = None
+        self.gravity = [0.0, 0.0, 0.0]     # g, x y z, smoothed
+        self.gravity_told = None
         self.surface = 0
         self.facing = ""
         self.raw = None
@@ -227,7 +243,7 @@ class Posture:
             GLib.source_remove(watch)     # before the close: a watch on a closed fd spins
             sock.close()
         self.sockets = []
-        self.sensor_session = self.surface_session = None
+        self.sensor_session = self.surface_session = self.accel_session = None
         try:
             self.system.call_sync(SENSORFW, SENSOR_MANAGER, "local.SensorManager", "loadPlugin",
                                   GLib.Variant("(s)", ("hingesensor",)), None,
@@ -243,6 +259,24 @@ class Posture:
         except GLib.Error as err:
             self.sensor_session = None
             log(f"no hinge sensor yet: {err.message} (is the rebuilt sensorfw installed? sudo sfduo-sensorfw-install)")
+        try:
+            self.system.call_sync(SENSORFW, SENSOR_MANAGER, "local.SensorManager", "loadPlugin",
+                                  GLib.Variant("(s)", ("accelerometersensor",)), None,
+                                  Gio.DBusCallFlags.NONE, 3000, None)
+            reply = self.system.call_sync(SENSORFW, SENSOR_MANAGER, "local.SensorManager",
+                                          "requestSensor", GLib.Variant("(sx)", ("accelerometersensor", 0)),
+                                          None, Gio.DBusCallFlags.NONE, 3000, None)
+            self.accel_session = reply[0]
+            self._attach(self.accel_session, self._on_accel, ACCEL_READING)
+            self.system.call_sync(SENSORFW, ACCEL_PATH, ACCEL_IFACE, "setInterval",
+                                  GLib.Variant("(ii)", (self.accel_session, ACCEL_INTERVAL_MS)), None,
+                                  Gio.DBusCallFlags.NONE, 3000, None)
+            if not self.dark:
+                self._sensor("start")
+            log(f"accelerometer session {self.accel_session}")
+        except GLib.Error as err:
+            self.accel_session = None
+            log(f"no accelerometer: {err.message}")
         if not READ_SURFACE:
             return False
         try:
@@ -265,10 +299,11 @@ class Posture:
             log(f"no posture sensor: {err.message} (sensorfw 0.14.8+itemae2 or later)")
         return False
 
-    def _attach(self, session, on_value):
+    def _attach(self, session, on_value, reading=READING):
         """Connect the session's data socket, as sensorfw's client library
         does: it greets with a newline, the session's number goes back. Then
-        each frame's last reading goes to `on_value`."""
+        each frame's last reading goes to `on_value`: its value (a hinge's
+        degrees), or its x, y, z (an accelerometer's, `reading` ACCEL_READING)."""
         try:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.connect(SENSORFW_SOCKET)
@@ -289,14 +324,15 @@ class Posture:
                     last = None
                     while len(pending) >= 4:
                         count = struct.unpack_from("=I", pending)[0]
-                        end = 4 + READING.size * count
+                        end = 4 + reading.size * count
                         if count > 1000:          # out of step: start over
                             pending.clear()
                             break
                         if len(pending) < end:
                             break
                         if count:
-                            last = READING.unpack_from(pending, end - READING.size)[1]
+                            fields = reading.unpack_from(pending, end - reading.size)[1:]
+                            last = fields[0] if len(fields) == 1 else fields
                         del pending[:end]
                     if last is not None:
                         on_value(last)
@@ -314,7 +350,8 @@ class Posture:
     def _sensor(self, method):
         """Start or stop the hinge and posture sensors on the SLPI."""
         for session, path, iface in ((self.sensor_session, HINGE_PATH, HINGE_IFACE),
-                                     (self.surface_session, SURFACE_PATH, SURFACE_IFACE)):
+                                     (self.surface_session, SURFACE_PATH, SURFACE_IFACE),
+                                     (self.accel_session, ACCEL_PATH, ACCEL_IFACE)):
             if session is None:
                 continue
             try:
@@ -418,6 +455,19 @@ class Posture:
             log(f"facing: {facing or 'none'}")
         self._publish(changed)
 
+    def _on_accel(self, xyz):
+        """Which way is down, smoothed: told when it moves by GRAVITY_STEP."""
+        if self.dark:
+            return
+        g = [v / 1000.0 for v in xyz]
+        if self.gravity_told is None:
+            self.gravity = g
+        else:
+            self.gravity = [o + (n - o) * GRAVITY_SMOOTH for o, n in zip(self.gravity, g)]
+        if self.gravity_told is None or max(abs(a - b) for a, b in zip(self.gravity, self.gravity_told)) >= GRAVITY_STEP:
+            self.gravity_told = list(self.gravity)
+            self._publish({"Gravity": [round(v, 3) for v in self.gravity]})
+
     # ---- gliding to the last reading ---------------------------------------
 
     def _start_clock(self):
@@ -482,6 +532,8 @@ class Posture:
             return GLib.Variant("u", self.surface)
         if name == "Facing":
             return GLib.Variant("s", self.facing)
+        if name == "Gravity":
+            return GLib.Variant("ad", self.gravity)
         return None
 
     def _publish(self, changed):
@@ -490,7 +542,7 @@ class Posture:
         variants = {}
         for key, value in changed.items():
             sig = {"Angle": "d", "Raw": "u", "Posture": "s", "Moving": "b", "Velocity": "d",
-                   "Surface": "u", "Facing": "s"}[key]
+                   "Surface": "u", "Facing": "s", "Gravity": "ad"}[key]
             variants[key] = GLib.Variant(sig, value)
         try:
             self.session.emit_signal(None, OBJECT_PATH, "org.freedesktop.DBus.Properties",
