@@ -13,6 +13,7 @@ sfduo-slot-guard           /usr/local/sbin/              ...the script it runs, 
 sfduo-modem.service        /etc/systemd/system/          the modem online and on LTE, every boot
 sfduo-modem                /usr/local/sbin/              ...the script it runs
 sfduo-ofono2mm-fix         /usr/local/sbin/              ofono2mm's bearers let go together (each suspend)
+90-sfduo-mobile-data       /etc/NetworkManager/dispatcher.d/  mobile data off while on Wi-Fi
 50-sfduo-lid.conf          /etc/systemd/logind.conf.d/   closing the device locks it
 sfduo-screens              /usr/local/sbin/              panel power without the compositor
 50-sfduo-screens           /etc/sudoers.d/               the session may run the above

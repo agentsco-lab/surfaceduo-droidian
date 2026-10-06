@@ -1075,6 +1075,11 @@ install -m755 "$SYSTEM/sfduo-modem"              "$PKG/usr/local/sbin/"
 # suspend): fixed in place by postinst, and again whenever ofono2mm is
 # updated (the trigger below). See the script.
 install -m755 "$SYSTEM/sfduo-ofono2mm-fix"       "$PKG/usr/local/sbin/"
+# Mobile data off while on Wi-Fi (NetworkManager's dispatcher): with it up,
+# each suspend let it go and the network's release woke the phone ~80 s
+# later, all night. See the script.
+install -d "$PKG/etc/NetworkManager/dispatcher.d"
+install -m755 "$SYSTEM/90-sfduo-mobile-data"     "$PKG/etc/NetworkManager/dispatcher.d/"
 # glycin decodes images without its bwrap sandbox: 1.3-1.8 s off the first
 # image of every GTK3 process, phosh at each session start among them
 # (../system/sfduo-bwrap says why and how to undo it)
@@ -1259,6 +1264,7 @@ SHELL_SCALE=$(sed -n '/^\[output:HWCOMPOSER-1\]/,/^\[/{s/^scale = //p}' "$SHELLD
 python3 "$SHELLDIR/sfduo-shell-css" --scale "$SHELL_SCALE" \
     --template "$SHELLDIR/gtk.css.in" -o "$PKG/usr/share/sfduo/gtk.css"
 echo "/etc/phosh/phoc.ini" >> "$PKG/DEBIAN/conffiles"
+echo "/etc/NetworkManager/dispatcher.d/90-sfduo-mobile-data" >> "$PKG/DEBIAN/conffiles"
 
 cat > "$PKG/DEBIAN/control" <<EOF
 Package: adaptation-droidian-surfaceduo

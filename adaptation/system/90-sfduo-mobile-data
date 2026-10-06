@@ -1,0 +1,50 @@
+#!/bin/sh
+# 90-sfduo-mobile-data (NetworkManager dispatcher): mobile data off while
+# Wi-Fi is connected, back on when it goes (measured 2026-10-06).
+#
+# With mobile data up, NetworkManager lets it go before each suspend and
+# brings it back after each resume; about 80 s after each letting go the
+# modem woke the phone (the network releasing the call, glink-native), and
+# NetworkManager brought it up and let it go again: a wake every ~80 s all
+# night, lid shut. With no mobile data the phone slept until opened. On
+# Wi-Fi nothing needs it.
+#
+# Only the profiles this turned off are turned on again (kept in /run): one
+# the owner turned off stays off. The one that was up is brought up again
+# itself: NetworkManager does not autoconnect a connection taken down by
+# request, autoconnect on again or not. Nothing is done while NetworkManager is
+# asleep - it takes Wi-Fi down for each suspend, and that is no reason for
+# mobile data.
+
+ACTION=$2
+case "$ACTION" in
+    up|down|connectivity-change) ;;
+    *) exit 0 ;;
+esac
+
+[ "$(nmcli -t -f STATE general 2>/dev/null)" = asleep ] && exit 0
+
+HELD=/run/sfduo-mobile-data-held
+WAS_UP=/run/sfduo-mobile-data-was-up
+gsm() { nmcli -t -f UUID,TYPE connection show 2>/dev/null | awk -F: '$2 == "gsm" { print $1 }'; }
+
+if nmcli -t -f TYPE,STATE device 2>/dev/null | grep -qx 'wifi:connected'; then
+    for u in $(nmcli -t -f UUID,TYPE connection show --active 2>/dev/null | awk -F: '$2 == "gsm" { print $1 }'); do
+        echo "$u" > "$WAS_UP"
+    done
+    for u in $(gsm); do
+        [ "$(nmcli -g connection.autoconnect connection show "$u" 2>/dev/null)" = yes ] || continue
+        nmcli connection modify "$u" connection.autoconnect no && echo "$u" >> "$HELD"
+        nmcli connection down "$u" >/dev/null 2>&1 || true
+        echo "sfduo-mobile-data: $u off (on Wi-Fi)"
+    done
+elif [ -s "$HELD" ]; then
+    for u in $(sort -u "$HELD"); do
+        nmcli connection modify "$u" connection.autoconnect yes && echo "sfduo-mobile-data: $u on again (no Wi-Fi)"
+    done
+    up=$(cat "$WAS_UP" 2>/dev/null)
+    [ -n "$up" ] || up=$(sort -u "$HELD" | head -1)
+    rm -f "$HELD" "$WAS_UP"
+    nmcli --wait 0 connection up "$up" >/dev/null 2>&1 && echo "sfduo-mobile-data: $up up"
+fi
+exit 0
