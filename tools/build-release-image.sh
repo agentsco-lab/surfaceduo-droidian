@@ -13,7 +13,8 @@
 #   item: compositor/tools/package-deb.sh          (as yourself)
 #   sudo tools/build-release-image.sh [ADAPTATION.deb] [ITEM.deb]
 #
-# Out: out/release/<name>/rootfs.img.zst, its sha256s and manifest.json.
+# Out: out/release/<name>/rootfs.img.zst, its sha256s and manifest.json
+# (and boot.img with BOOT_IMG set: tools/release-add-boot.sh).
 # Not in the image: anyone's ssh key (item/grid puts the owner's in when it
 # installs), the host's ssh keys and machine-id (made on the first boot).
 # The PIN stays Droidian's 1234 until item's first start sets one (#148);
@@ -154,6 +155,11 @@ cat > "$OUT/manifest.json" <<JSON
   "pin": "1234 until item's first start sets one"
 }
 JSON
+# The port's boot image with it, for phones coming from stock Android
+# (BOOT_IMG=out/boot-<...>.img: the one the phones run; tools/release-add-boot.sh).
+if [ -n "${BOOT_IMG:-}" ]; then
+    "$ROOT/tools/release-add-boot.sh" "$OUT" "$BOOT_IMG"
+fi
 rm -rf "$WORK"
 chown -R "$OWNER": "$ROOT/out/release"
 echo "== done: $OUT"
