@@ -1071,6 +1071,10 @@ install -m644 "$SYSTEM/sfduo-slot-guard.service" "$PKG/usr/lib/systemd/system/"
 install -m755 "$SYSTEM/sfduo-slot-guard" "$PKG/usr/local/sbin/"
 install -m644 "$SYSTEM/sfduo-modem.service"      "$PKG/usr/lib/systemd/system/"
 install -m755 "$SYSTEM/sfduo-modem"              "$PKG/usr/local/sbin/"
+# ofono2mm's bearers let go together when NetworkManager disconnects (each
+# suspend): fixed in place by postinst, and again whenever ofono2mm is
+# updated (the trigger below). See the script.
+install -m755 "$SYSTEM/sfduo-ofono2mm-fix"       "$PKG/usr/local/sbin/"
 # glycin decodes images without its bwrap sandbox: 1.3-1.8 s off the first
 # image of every GTK3 process, phosh at each session start among them
 # (../system/sfduo-bwrap says why and how to undo it)
@@ -1284,9 +1288,17 @@ Match Address 172.16.42.0/24
     PasswordAuthentication yes
 SSHD
 
+echo "interest-noawait /usr/lib/ofono2mm/ofono2mm/mm_bearer.py" > "$PKG/DEBIAN/triggers"
+
 cat > "$PKG/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
+# ofono2mm updated: its bearer fix again (sfduo-ofono2mm-fix), nothing else.
+if [ "$1" = triggered ]; then
+    /usr/local/sbin/sfduo-ofono2mm-fix || true
+    exit 0
+fi
+/usr/local/sbin/sfduo-ofono2mm-fix || true
 # sshd takes the USB-only password rule now (it is offline in a chroot)
 if systemctl is-active -q ssh 2>/dev/null && sshd -t 2>/dev/null; then systemctl reload ssh || true; fi
 # migrate off the hand-injected copies (shadow the packaged unit if left)
