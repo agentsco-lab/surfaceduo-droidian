@@ -156,9 +156,10 @@ cat > "$OUT/manifest.json" <<JSON
 }
 JSON
 # The port's boot image with it, for phones coming from stock Android
-# (BOOT_IMG=out/boot-<...>.img: the one the phones run; tools/release-add-boot.sh).
+# (BOOT_IMG=out/boot-<...>.img: the one the phones run; VBMETA_IMG: the
+# port's, verification off; tools/release-add-boot.sh).
 if [ -n "${BOOT_IMG:-}" ]; then
-    "$ROOT/tools/release-add-boot.sh" "$OUT" "$BOOT_IMG"
+    "$ROOT/tools/release-add-boot.sh" "$OUT" "$BOOT_IMG" "${VBMETA_IMG:-}"
 fi
 rm -rf "$WORK"
 chown -R "$OWNER": "$ROOT/out/release"
