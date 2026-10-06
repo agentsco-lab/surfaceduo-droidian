@@ -176,3 +176,29 @@ also restore a backup.
 6. **Leave the port's kernel on both slots.** Stock Android on the other
    slot is a trap: if the active slot drifts (it does, SAFETY.md), stock
    boots on the port's userdata and poisons misc.
+
+## C. Back to stock Android for good (item/grid, "stock › android")
+
+Done on this Duo on 2026-10-06, about 8 minutes (item/grid's
+`android::go_clean`). Unlike A, Android does not run RAM-booted: its own
+boot is on the slot again, and a plain restart starts it.
+
+What it read first (`itemgrid android-plan`, nothing written): super held
+Android 2022.902.32 on slot a only - slot b's `system_b` and `vendor_b`
+carry no filesystem (an OTA to 902.48 begun there and never finished), so
+nothing is written to b. Microsoft's 902.48 package on the computer did not
+belong to that build (its kernel a month newer); the stock kernel came from
+the backup taken before the port (`out/backups/device-2026-09-18/
+boot_a-stock-backup.img`, built 10 Jul 2023 like the vendor in super).
+The port changes only boot and vbmeta (`vbmeta-disabled.img`); dtbo it never
+touches.
+
+1. TWRP RAM-booted (no full backup taken first: the owner's choice).
+2. metadata and userdata zeroed whole and read back (all zeros).
+3. Into slot a with dd from TWRP, each sent, checked, written and read back:
+   `boot_a` <- the stock kernel, `vbmeta_a` <- the stock vbmeta (AVB flags 0).
+4. misc cleared; `adb reboot`: Android's setup came up by itself.
+
+The bootloader stays unlocked. To bring item back: item/grid's "install
+item" on the phone in stock Android (USB debugging on) - or B, from a full
+backup.
