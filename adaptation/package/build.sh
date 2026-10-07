@@ -324,15 +324,21 @@ cat > "$PKG/usr/local/sbin/sfduo-usb-plug" <<'PLUG'
 #!/bin/sh
 # The USB gadget bound again after a sleep: at the resume with a cable in
 # (sfduo-usb, "resume"), or when a cable comes after one without (udev).
+# One at a time: udev says a cable came several times over, and bindings
+# made at once broke the controller (DWC3_CONTROLLER_ERROR_EVENT, "failed
+# to stop controller", 2026-10-07).
+exec 9>/run/sfduo-usb-plug.lock
+flock 9
 SSUSB=/sys/bus/platform/devices/a600000.ssusb
 G=/sys/kernel/config/usb_gadget/sfduo
 [ -n "$(cat $G/UDC 2>/dev/null)" ] && exit 0
 UDC=$(cat /run/sfduo-udc-saved 2>/dev/null)
+[ -n "$UDC" ] || UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
 [ -n "$UDC" ] || exit 0
 # "peripheral" here tells msm-dwc3 a cable is in (its VBUS session):
 # written with none in, the controller sat in a session of its own, and
 # the cable plugged in later went unseen until plugged again.
-[ "$1" = resume ] && echo peripheral > $SSUSB/mode 2>/dev/null
+[ "$(cat /sys/class/power_supply/usb/present 2>/dev/null)" = 1 ] && echo peripheral > $SSUSB/mode 2>/dev/null
 sleep 1
 echo "$UDC" > $G/UDC 2>/dev/null
 # The gadget bound again makes its network interface anew: its address, as
