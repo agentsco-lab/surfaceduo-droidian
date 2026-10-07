@@ -1,3 +1,13 @@
+sensorfw-qt6 (0.14.8+itemae3) trixie; urgency=medium
+
+  * A client gone without a word (killed) loses its session: a write to its
+    closed socket stops its sensor (it streamed into the dead socket at
+    ~100 Hz, keeping the phone awake all night); the socket's error signal
+    connected by its Qt6 name (errorOccurred); a lost session not on any
+    sensor's list is stopped on every channel and its socket dropped.
+
+ -- Ivan Verbovoy <145046797+iverbovoy@users.noreply.github.com>  Wed, 07 Oct 2026 10:30:00 +0300
+
 sensorfw-qt6 (0.14.8+itemae2) trixie; urgency=medium
 
   * Add Microsoft's posture sensor (vendor type 33171009) for Surface Duo:

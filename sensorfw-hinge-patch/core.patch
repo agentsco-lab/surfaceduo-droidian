@@ -41,6 +41,105 @@ index 45e335b..ec12281 100644
  
  #define GRAVITY_RECIPROCAL_THOUSANDS 101.971621298
  #define RADIANS_TO_DEGREESECONDS 57295.7795
+diff --git a/core/sensormanager.cpp b/core/sensormanager.cpp
+index bc052eb..7e0aab6 100644
+--- a/core/sensormanager.cpp
++++ b/core/sensormanager.cpp
+@@ -796,7 +796,16 @@ void SensorManager::lostClient(int sessionId)
+             return;
+         }
+     }
+-    sensordLogW() << "[SensorManager]: Lost session " << sessionId << " detected, but not found from session list";
++    // Not on any sensor's list, yet maybe still streamed to (a channel
++    // whose session outlived its request - Surface Duo, 2026-10-07): stopped
++    // on every channel that has it, and its socket dropped, so nothing goes
++    // on writing to a client that is gone.
++    sensordLogW() << "[SensorManager]: Lost session " << sessionId << " detected, but not found from session list - stopped wherever it runs";
++    for(QMap<QString, SensorInstanceEntry>::iterator it = sensorInstanceMap_.begin(); it != sensorInstanceMap_.end(); ++it) {
++        if (it.value().sensor_)
++            it.value().sensor_->stop(sessionId);
++    }
++    socketHandler_->removeSession(sessionId);
+ }
+ 
+ void SensorManager::dbusClientUnregistered(const QString &clientName)
+diff --git a/core/sockethandler.cpp b/core/sockethandler.cpp
+index fa07ced..4790877 100644
+--- a/core/sockethandler.cpp
++++ b/core/sockethandler.cpp
+@@ -28,6 +28,7 @@
+ 
+ #include <QLocalSocket>
+ #include <QLocalServer>
++#include <QTimer>
+ #include <sys/socket.h>
+ #include <sys/time.h>
+ #include "logging.h"
+@@ -260,7 +261,22 @@ bool SocketHandler::write(int id, const void* source, int size)
+         sensordLogD() << "[SocketHandler]: Trying to write to nonexistent session (normal, no panic).";
+         return false;
+     }
+-    return (*it)->write(source, size);
++    if ((*it)->write(source, size))
++        return true;
++    // The client gone without a word (killed: no disconnect noticed) - its
++    // session lost, its sensor stopped, not written to forever (Surface Duo,
++    // 2026-10-07: ~100 writes a second all night, the phone kept awake).
++    QLocalSocket* socket = (*it)->getSocket();
++    if (socket && socket->state() != QLocalSocket::ConnectedState && !m_lost.contains(id)) {
++        m_lost.insert(id);
++        sensordLogW() << "[SocketHandler]: Client of session" << id << "is gone:" << socket->errorString() << "- session lost";
++        QTimer::singleShot(0, this, [this, id]() {
++            m_lost.remove(id);
++            if (m_idMap.contains(id))
++                emit lostSession(id);
++        });
++    }
++    return false;
+ }
+ 
+ bool SocketHandler::removeSession(int sessionId)
+@@ -275,7 +291,7 @@ bool SocketHandler::removeSession(int sessionId)
+     if (socket) {
+         disconnect(socket, SIGNAL(readyRead()), this, SLOT(socketReadable()));
+         disconnect(socket, SIGNAL(disconnected()), this, SLOT(socketDisconnected()));
+-        disconnect(socket, SIGNAL(error(QLocalSocket::LocalSocketError)), this, SLOT(socketError(QLocalSocket::LocalSocketError)));
++        disconnect(socket, SIGNAL(errorOccurred(QLocalSocket::LocalSocketError)), this, SLOT(socketError(QLocalSocket::LocalSocketError)));
+         socket->deleteLater();
+     }
+ 
+@@ -302,7 +318,7 @@ void SocketHandler::newConnection()
+         QLocalSocket* socket = m_server->nextPendingConnection();
+         connect(socket, SIGNAL(readyRead()), this, SLOT(socketReadable()));
+         connect(socket, SIGNAL(disconnected()), this, SLOT(socketDisconnected()));
+-        connect(socket, SIGNAL(error(QLocalSocket::LocalSocketError)), this, SLOT(socketError(QLocalSocket::LocalSocketError)));
++        connect(socket, SIGNAL(errorOccurred(QLocalSocket::LocalSocketError)), this, SLOT(socketError(QLocalSocket::LocalSocketError)));
+ 
+         // Initialize socket
+         socket->write("\n", 1);
+diff --git a/core/sockethandler.h b/core/sockethandler.h
+index c96fc9e..27ecb8b 100644
+--- a/core/sockethandler.h
++++ b/core/sockethandler.h
+@@ -29,6 +29,7 @@
+ #define SOCKETHANDLER_H
+ 
+ #include <QObject>
++#include <QSet>
+ #include <QMap>
+ #include <QTimer>
+ #include <QList>
+@@ -363,6 +364,10 @@ Q_SIGNALS:
+      */
+     void lostSession(int sessionId);
+ 
++private:
++    /** Sessions found gone on a write, their loss being told. */
++    QSet<int> m_lost;
++
+ private slots:
+     /**
+      * Callback for new client connection.
 diff --git a/debian/libsensorfw-qt6-plugins.install b/debian/libsensorfw-qt6-plugins.install
 index b2dc1ef..1e26712 100644
 --- a/debian/libsensorfw-qt6-plugins.install

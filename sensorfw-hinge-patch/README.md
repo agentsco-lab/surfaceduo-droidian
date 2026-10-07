@@ -92,6 +92,36 @@ takes about half an hour, and two traps show up:
   - point the direct call in `debian/rules` at the shim.
   This is a build-machine problem only; the packages are the same.
 
+## A client gone without a word (0.14.8+itemae3, 2026-10-07)
+
+A client killed outright (item/grid's `duo-motion`, when its ssh drops)
+left its session in sensorfwd: the sensor went on streaming at ~100 Hz
+into the closed socket ("failed to write payload to the socket: Remote
+closed" ~100 a second), all night - the phone kept waking, the journal
+flooded. Two causes in `core/`:
+
+- `SocketHandler` connected the socket's `error(...)` signal by its Qt5
+  name; in Qt6 it is `errorOccurred(...)`, so the connect failed ("No such
+  signal") and a dead client was never noticed. Now `errorOccurred`, and a
+  write that fails on a socket no longer connected loses the session
+  (`lostSession`, once).
+- `SensorManager::lostClient` stopped only a sensor whose request list held
+  the session; one still streamed to it after its request was gone. Now a
+  lost session not on any list is stopped on every channel, and its socket
+  dropped.
+
+Check: `kill -KILL $(pidof duo-motion)`, then
+`journalctl -u sensorfwd --since -10s | grep -c "Remote closed"` stays at a
+few, not hundreds.
+
+Building it on the Duo (2026-10-07): an overlay over its own root
+(`lowerdir=/`, upper on /userdata), /proc /sys /dev /dev/pts **and /run**
+bound in (resolv.conf points into /run). Droidian's repo no longer carries
+`libgbinder-dev` / `libglibutil-dev`: taken from Debian trixie inside the
+overlay only (pinned at 100). Leave `android-headers` out of the apt list
+(a virtual package; libhybris-dev brings the headers). Run it under
+`systemd-inhibit --what=sleep:idle`.
+
 ## Install traps (all hit in practice)
 
 - Install the resulting qt6 debs with `apt install ./libsensorfw-qt6*.deb
