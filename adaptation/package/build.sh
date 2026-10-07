@@ -301,33 +301,55 @@ SSUSB=/sys/bus/platform/devices/a600000.ssusb
 G=/sys/kernel/config/usb_gadget/sfduo
 case "$1" in
     pre)
-        cat $G/UDC 2>/dev/null > /run/sfduo-udc-saved
+        # Kept unbound already (a resume without a cable): what was saved stays.
+        U=$(cat $G/UDC 2>/dev/null)
+        [ -n "$U" ] && echo "$U" > /run/sfduo-udc-saved
         echo "" > $G/UDC 2>/dev/null
         echo none > $SSUSB/mode 2>/dev/null
         ;;
     post)
-        # "peripheral" here tells msm-dwc3 a cable is in (its VBUS session):
-        # written with none in, the controller sat in a session of its own,
-        # and the cable plugged in later went unseen until plugged again.
-        # Without a cable it is left to the cable's own event.
-        [ "$(cat /sys/class/power_supply/usb/present 2>/dev/null)" = 1 ] && echo peripheral > $SSUSB/mode 2>/dev/null
-        sleep 1
-        UDC=$(cat /run/sfduo-udc-saved 2>/dev/null)
-        [ -n "$UDC" ] && echo "$UDC" > $G/UDC 2>/dev/null
-        # The gadget bound again makes its network interface anew: its
-        # address, as sfduo-usb-gadget.sh gives it at boot (without it
-        # 172.16.42.1 was gone after every resume).
-        sleep 1
-        for IFACE in usb0 rndis0; do
-            ip link show "$IFACE" >/dev/null 2>&1 || continue
-            ip addr add 172.16.42.1/24 dev "$IFACE" 2>/dev/null
-            ip link set "$IFACE" up
-        done
+        # No cable: the gadget left unbound till one comes (sfduo-usb-plug,
+        # from udev) - bound again at every resume, it made rndis0 anew,
+        # NetworkManager's netlink events broke the next suspend and two
+        # seconds were spent awake here each time (2026-10-07: ~6 min an
+        # hour awake, the lid shut).
+        [ "$(cat /sys/class/power_supply/usb/present 2>/dev/null)" = 1 ] || exit 0
+        exec /usr/local/sbin/sfduo-usb-plug resume
         ;;
 esac
 exit 0
 SLEEP
 chmod 755 "$PKG/usr/lib/systemd/system-sleep/sfduo-usb"
+cat > "$PKG/usr/local/sbin/sfduo-usb-plug" <<'PLUG'
+#!/bin/sh
+# The USB gadget bound again after a sleep: at the resume with a cable in
+# (sfduo-usb, "resume"), or when a cable comes after one without (udev).
+SSUSB=/sys/bus/platform/devices/a600000.ssusb
+G=/sys/kernel/config/usb_gadget/sfduo
+[ -n "$(cat $G/UDC 2>/dev/null)" ] && exit 0
+UDC=$(cat /run/sfduo-udc-saved 2>/dev/null)
+[ -n "$UDC" ] || exit 0
+# "peripheral" here tells msm-dwc3 a cable is in (its VBUS session):
+# written with none in, the controller sat in a session of its own, and
+# the cable plugged in later went unseen until plugged again.
+[ "$1" = resume ] && echo peripheral > $SSUSB/mode 2>/dev/null
+sleep 1
+echo "$UDC" > $G/UDC 2>/dev/null
+# The gadget bound again makes its network interface anew: its address, as
+# sfduo-usb-gadget.sh gives it at boot.
+sleep 1
+for IFACE in usb0 rndis0; do
+    ip link show "$IFACE" >/dev/null 2>&1 || continue
+    ip addr add 172.16.42.1/24 dev "$IFACE" 2>/dev/null
+    ip link set "$IFACE" up
+done
+exit 0
+PLUG
+chmod 755 "$PKG/usr/local/sbin/sfduo-usb-plug"
+cat > "$PKG/etc/udev/rules.d/99-sfduo-usb-plug.rules" <<'RULES'
+# A cable after a sleep without one: the USB gadget bound again (sfduo-usb).
+SUBSYSTEM=="power_supply", KERNEL=="usb", ACTION=="change", ATTR{present}=="1", RUN+="/usr/bin/systemd-run --no-block --collect /usr/local/sbin/sfduo-usb-plug"
+RULES
 # Expedited RCU for the way into sleep only (2026-10-02, measured with the
 # power:suspend_resume and cpuhp trace events): Android's init leaves
 # rcu_normal=1 after boot, and each core's sched_cpu_deactivate then waited
@@ -374,6 +396,8 @@ chmod 755 "$PKG/usr/lib/systemd/system-sleep/sfduo-wakeup-count"
 cat > "$PKG/usr/lib/systemd/system-sleep/sfduo-brightness" <<'SLEEP'
 #!/bin/sh
 [ "$1" = "post" ] || exit 0
+# item keeps the panels' brightness itself (gsd-power's is not done).
+pgrep -x item-compositor >/dev/null && exit 0
 (
   ENV="XDG_RUNTIME_DIR=/run/user/32011 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/32011/bus"
   for i in 1 2 3 4 5; do
