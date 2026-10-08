@@ -115,8 +115,12 @@ Check: `kill -KILL $(pidof duo-motion)`, then
 few, not hundreds.
 
 Building it on the Duo (2026-10-07): an overlay over its own root
-(`lowerdir=/`, upper on /userdata), /proc /sys /dev /dev/pts **and /run**
-bound in (resolv.conf points into /run). Droidian's repo no longer carries
+(`lowerdir=/`, upper on /userdata), /proc /sys /dev /dev/pts bound in.
+**Not /run**: with it bound, a package's maintainer scripts reached the
+phone's running systemd and restarted services under it (2026-10-08: sshd
+reset every connection after a NetworkManager build pulled packages from
+Debian sid). Copy resolv.conf in instead, and put a `policy-rc.d` that
+exits 101 in the overlay so nothing is started or restarted. Droidian's repo no longer carries
 `libgbinder-dev` / `libglibutil-dev`: taken from Debian trixie inside the
 overlay only (pinned at 100). Leave `android-headers` out of the apt list
 (a virtual package; libhybris-dev brings the headers). Run it under

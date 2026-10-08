@@ -15,10 +15,18 @@
 # request, autoconnect on again or not. Nothing is done while NetworkManager is
 # asleep - it takes Wi-Fi down for each suspend, and that is no reason for
 # mobile data.
+#
+# Nor straight after a resume: NetworkManager is awake again before Wi-Fi is
+# back, and seeing "no Wi-Fi" then, mobile data came on at the first resume
+# of the night and stayed on (2026-10-08: the modem woke the phone ~220
+# times, lid shut). So Wi-Fi gone, mobile data waits 90 s awake (a systemd
+# timer on the monotonic clock, which stands still while the phone sleeps)
+# and comes on only if Wi-Fi is still not back; Wi-Fi back, the wait is
+# dropped.
 
 ACTION=$2
 case "$ACTION" in
-    up|down|connectivity-change) ;;
+    up|down|connectivity-change|recheck) ;;
     *) exit 0 ;;
 esac
 
@@ -38,6 +46,11 @@ if nmcli -t -f TYPE,STATE device 2>/dev/null | grep -qx 'wifi:connected'; then
         nmcli connection down "$u" >/dev/null 2>&1 || true
         echo "sfduo-mobile-data: $u off (on Wi-Fi)"
     done
+    systemctl stop sfduo-mobile-data-recheck.timer 2>/dev/null || true
+elif [ -s "$HELD" ] && [ "$ACTION" != recheck ]; then
+    # Wi-Fi gone: looked at again after 90 s awake.
+    systemctl is-active -q sfduo-mobile-data-recheck.timer 2>/dev/null || \
+        systemd-run --quiet --collect --unit=sfduo-mobile-data-recheck --on-active=90 "$0" "" recheck >/dev/null 2>&1 || true
 elif [ -s "$HELD" ]; then
     for u in $(sort -u "$HELD"); do
         nmcli connection modify "$u" connection.autoconnect yes && echo "sfduo-mobile-data: $u on again (no Wi-Fi)"
