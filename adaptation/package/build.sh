@@ -1105,6 +1105,7 @@ install -m755 "$SYSTEM/sfduo-modem"              "$PKG/usr/local/sbin/"
 # suspend): fixed in place by postinst, and again whenever ofono2mm is
 # updated (the trigger below). See the script.
 install -m755 "$SYSTEM/sfduo-ofono2mm-fix"       "$PKG/usr/local/sbin/"
+install -m755 "$SYSTEM/sfduo-nm-wake-fix"        "$PKG/usr/local/sbin/"
 # Mobile data off while on Wi-Fi (NetworkManager's dispatcher): with it up,
 # each suspend let it go and the network's release woke the phone ~80 s
 # later, all night. See the script.
@@ -1325,16 +1326,21 @@ Match Address 172.16.42.0/24
 SSHD
 
 echo "interest-noawait /usr/lib/ofono2mm/ofono2mm/mm_bearer.py" > "$PKG/DEBIAN/triggers"
+echo "interest-noawait /usr/sbin/NetworkManager" >> "$PKG/DEBIAN/triggers"
 
 cat > "$PKG/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
-# ofono2mm updated: its bearer fix again (sfduo-ofono2mm-fix), nothing else.
+# ofono2mm or NetworkManager updated: their fixes again (sfduo-ofono2mm-fix,
+# sfduo-nm-wake-fix), nothing else. NetworkManager is not restarted for it
+# (an update over Wi-Fi would lose its own connection): the next boot.
 if [ "$1" = triggered ]; then
     /usr/local/sbin/sfduo-ofono2mm-fix || true
+    /usr/local/sbin/sfduo-nm-wake-fix || true
     exit 0
 fi
 /usr/local/sbin/sfduo-ofono2mm-fix || true
+/usr/local/sbin/sfduo-nm-wake-fix || true
 # sshd takes the USB-only password rule now (it is offline in a chroot)
 if systemctl is-active -q ssh 2>/dev/null && sshd -t 2>/dev/null; then systemctl reload ssh || true; fi
 # migrate off the hand-injected copies (shadow the packaged unit if left)
