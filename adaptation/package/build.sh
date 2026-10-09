@@ -11,7 +11,7 @@ ACCESS="$HERE/../access"
 SYSTEM="$HERE/../system"
 SHELLDIR="$HERE/../shell"
 BUSYBOX="$ROOT/out/busybox-arm64"
-VER="${1:-0.21.3}"
+VER="${1:-0.22.0}"
 OUT="$ROOT/out"
 PKG="$OUT/pkgroot"
 
@@ -1113,8 +1113,11 @@ install -d "$PKG/etc/NetworkManager/dispatcher.d"
 install -m755 "$SYSTEM/90-sfduo-mobile-data"     "$PKG/etc/NetworkManager/dispatcher.d/"
 # glycin decodes images without its bwrap sandbox: 1.3-1.8 s off the first
 # image of every GTK3 process, phosh at each session start among them
-# (../system/sfduo-bwrap says why and how to undo it)
-install -Dm755 "$SYSTEM/sfduo-bwrap" "$PKG/usr/local/bin/bwrap"
+# (../system/sfduo-bwrap says why and how to undo it). Mode 4755: the bit
+# does nothing on a script, but flatpak reads it off whatever bwrap it finds
+# on PATH, and without it sandboxes every app with a user namespace this
+# kernel cannot mount proc in - no flatpak ran from 0.20.0 to 0.21.4.
+install -Dm4755 "$SYSTEM/sfduo-bwrap" "$PKG/usr/local/bin/bwrap"
 install -Dm644 "$SYSTEM/99-sfduo-ofono.conf" "$PKG/etc/NetworkManager/conf.d/99-sfduo-ofono.conf"
 # The pen as a pen (#24): the digitizer's node split into a touchscreen and a
 # tablet with pressure and buttons (../system/sfduo-pen-split)

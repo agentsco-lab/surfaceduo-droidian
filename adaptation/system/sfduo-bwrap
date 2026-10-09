@@ -13,8 +13,18 @@
 # refuses a namespace, and glycin then decodes without a sandbox, in a plain
 # process of its own ("Glycin running without sandbox"), as image loaders did
 # everywhere until glycin. Every other bwrap run goes to the real one
-# unchanged; flatpak calls /usr/bin/bwrap by its full path and is not touched.
-# To give glycin its sandbox back, remove this file.
+# unchanged. To give glycin its sandbox back, remove this file.
+#
+# Installed with the setuid bit (mode 4755), which the kernel ignores on a
+# script - it runs as whoever runs it - but flatpak reads: flatpak finds
+# bwrap on PATH too, stats it, and where the file is not setuid it adds
+# --unshare-user to every sandbox (flatpak-run.c, "Disable recursive
+# userns"). Droidian ships bubblewrap setuid (bwrap.suid) because this
+# 4.14 kernel cannot mount proc in a pid namespace made together with a
+# user namespace: "Can't mount proc on /newroot/proc: Device or resource
+# busy". From 0.20.0 to 0.21.4 this file hid the setuid bit of
+# /usr/bin/bwrap, and no flatpak ran (reported by a Duo owner on 0.21,
+# 2026-10-09). Rename or copy it without the bit and flatpak breaks again.
 
 case " $* " in
     *" --seccomp "*" /usr/bin/true "*)
