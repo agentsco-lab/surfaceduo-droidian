@@ -2,10 +2,11 @@
 
 > **This repository is the port: the hardware and the system.** It runs
 > Droidian's own shell, with only the fixes the hinge's seam needs. The
-> two-panel shell - a dock across both panels, windows tiled to the panel
-> they were launched from - is item-shell, a package of its own to install
-> on top, developed at [agentsco-lab/item](https://github.com/agentsco-lab/item).
-> Up to 0.20.x the port carried that shell itself.
+> two-panel shell for this phone is [item](https://github.com/agentsco-lab/item),
+> a compositor of its own installed on top of the port;
+> [item/grid](https://github.com/agentsco-lab/itemgrid) installs the port and
+> item on a Duo from a Linux computer. Up to 0.20.x the port carried the
+> two-panel shell itself (item-shell 0.1).
 
 **An independent Linux port for the Microsoft Surface Duo 1** - Debian
 arm64 (Droidian, Halium-based) running with both OLED panels and touch,
@@ -40,11 +41,16 @@ scale of 2: Droidian's own shell, with the fixes the seam needs.
 | The on-screen keyboard on one panel - the right one - instead of across the hinge. | The lock screen, its clock on the right panel. |
 
 The two-panel shell - a dock across both panels, windows tiled to the panel
-they were launched from - is item-shell, from
-[agentsco-lab/item](https://github.com/agentsco-lab/item); its screenshots
-are there.
+they were launched from, the hinge, the pen, CV ID - is item, a compositor
+of its own on top of the port: [agentsco-lab/item](https://github.com/agentsco-lab/item),
+with a minute of film and its screenshots.
 
-## Status (2026-09-29, 0.21.0 on Droidian 102)
+## Status (0.22.0 on Droidian 102)
+
+The rows were checked on 0.21.0 (2026-09-29). 0.22.0 (2026-10-09) changed
+the sleep - a phone shut sleeps the night, Wi-Fi up, about 1.3 % an hour -
+and mended Flatpak; its [release notes](https://github.com/agentsco-lab/surfaceduo-droidian/releases/tag/v0.22.0)
+have the measurements.
 
 | Subsystem | Status | Notes |
 |---|---|---|
@@ -67,7 +73,7 @@ are there.
 | GPS | ✅ | vendor GNSS + geoclue hybris source, ~4 m fixes; needs the geoclue keepalive drop-in from the adaptation (see traps below) |
 | Modem (calls/SMS/LTE) | ✅ | Calls and SMS both ways, LTE data (70-90 ms pings). The adaptation puts the modem online and on LTE at boot - it comes up offline and on 3G otherwise - and keeps it there: since 0.20.1 also when Droidian's mobile-power-saver asks it for 5G, which the Duo 1 does not have (the modem sat on 3G and never slept). See [adaptation/system](adaptation/system/README.md) |
 | Video out (USB-C DP) | ❓ | the whole DisplayPort path sits in the stock device tree and probes cleanly; whether the lanes reach the connector has never been tested - see below |
-| Dual-screen aware UI | ✅ | Droidian's own shell, taught about the hinge: a top bar and a shade per half, windows maximized one panel each and opened on the panel touched last, the keyboard, the notification banners, the volume bubble and the launch splash on one panel, the app grid in six columns clear of the hinge - patched phosh, phoc and phosh-osk-stevia and a stylesheet, see [adaptation/shell](adaptation/shell/README.md). The two-panel shell - a dock across both panels, windows tiled to the panel they were launched from, the system screen and the pen's sheet - is a package of its own on top, item-shell, from [agentsco-lab/item](https://github.com/agentsco-lab/item) (it was part of the port up to 0.20) |
+| Dual-screen aware UI | ✅ | Droidian's own shell, taught about the hinge: a top bar and a shade per half, windows maximized one panel each and opened on the panel touched last, the keyboard, the notification banners, the volume bubble and the launch splash on one panel, the app grid in six columns clear of the hinge - patched phosh, phoc and phosh-osk-stevia and a stylesheet, see [adaptation/shell](adaptation/shell/README.md). The two-panel shell - a dock across both panels, windows tiled to the panel they were launched from, the system screen and the pen's sheet - is item, a compositor of its own on top of the port, from [agentsco-lab/item](https://github.com/agentsco-lab/item) (item-shell 0.1 was part of the port up to 0.20) |
 
 ## Speed
 
@@ -105,7 +111,7 @@ Surface Duo 2 beside them, and how they are taken:
 ## Repository layout
 
 - `kernel-packaging/` - Droidian-style packaging for the
-  [Microsoft OSS kernel](https://github.com/microsoft/surface-duo-oss-kernel.msm-4.14)
+  [Microsoft OSS kernel](https://github.com/microsoft/surface-duo-oss)
   (branch `surfaceduo/11/2022.902.48`): `debian/`, the device config
   fragment, kernel patches (`patches/` - suspend fix, log-noise fix,
   audio build fixups), build instructions (containerized, reproducible).
@@ -153,9 +159,12 @@ Surface Duo 2 beside them, and how they are taken:
 7. The first boot installs the package and **reboots once, into
    fastboot**; RAM-boot the same image again, and that is the real one.
    Connect to Wi-Fi, run `sudo sfduo-shell-setup` and reboot: the pen
-   and the full-size root filesystem come with it. The two-panel shell is
-   `sudo apt install ./item-shell_<version>_arm64.deb` from
-   [agentsco-lab/item](https://github.com/agentsco-lab/item), if you want it.
+   and the full-size root filesystem come with it. The two-panel shell, item,
+   goes on top if you want it: `sudo apt install ./item_<version>_arm64.deb`
+   and `sudo item-switch item`, from
+   [agentsco-lab/item](https://github.com/agentsco-lab/item). Or let
+   [item/grid](https://github.com/agentsco-lab/itemgrid) do all of this from
+   a Linux computer.
 
 This path was run end to end on an untouched Droidian 102 nightly
 (2026-09-27) with the 0.20 package; what it found is in the 0.20.0 notes.

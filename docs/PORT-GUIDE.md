@@ -175,14 +175,18 @@ with all of it: Droidian's own shell on two panels, the pen, and the root
 filesystem grown to the size of userdata.
 
 The two-panel shell - a dock across both panels, windows tiled to the panel
-they were launched from, the system screen and the pen's sheet - is optional,
-a package of its own on top of this one, item-shell from
-[agentsco-lab/item](https://github.com/agentsco-lab/item):
+they were launched from, the system screen and the pen's sheet - is optional:
+item, a compositor of its own on top of this package, from
+[agentsco-lab/item](https://github.com/agentsco-lab/item). It takes phosh's
+place; phosh stays as the way back (`sudo item-switch phosh`):
 
 ```
-sudo apt install ./item-shell_<version>_arm64.deb
-sudo systemctl restart phosh
+sudo apt install ./item_<version>_arm64.deb
+sudo item-switch item
 ```
+
+[item/grid](https://github.com/agentsco-lab/itemgrid), on a Linux computer,
+does all of the above - the port, item, the backups - over the USB cable.
 
 Then, in Settings:
 
