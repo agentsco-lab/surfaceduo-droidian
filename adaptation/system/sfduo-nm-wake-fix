@@ -1,0 +1,72 @@
+#!/usr/bin/python3
+# sfduo-nm-wake-fix: NetworkManager leaves Wi-Fi up after a resume
+# (measured 2026-10-08).
+#
+# NetworkManager keeps a Wake-on-LAN device up through suspend ("sleep:
+# device wlan0 has wake-on-lan, skipping"), then takes it down belatedly at
+# resume (nm-manager.c, do_sleep_wake: "Belatedly take down Wake-on-LAN
+# devices"). The Duo's Wi-Fi driver keeps the association through deep
+# sleep with WoWLAN, so that only broke it: NetworkManager needed ~8 s to
+# bring Wi-Fi back, and a phone shut asleep again within seconds of each
+# wake had no Wi-Fi all night - 90-sfduo-mobile-data brought mobile data up
+# at the first resume, and the modem woke the phone ~220 times.
+#
+# No setting turns that off, and rebuilding the package needs -dev packages
+# Droidian does not carry. So the one branch is changed in the binary: the
+# Wake-on-LAN test before that take-down ("cbz w0" over its arguments -
+# NM_UNMANAGED_MANAGER_DISABLED, SET_UNMANAGED, REASON_SLEEPING (37)) becomes
+# a plain branch past it. Only Wi-Fi has Wake-on-LAN on the phone.
+#
+# Run by the adaptation package's postinst and again (a dpkg trigger)
+# whenever NetworkManager is updated. The five instructions are looked for,
+# not an address: found once it changes them, found already changed it does
+# nothing, found not or more than once it leaves the binary alone (the code
+# changed upstream: look at it again). The file is replaced whole (a running
+# binary cannot be written to); NetworkManager takes it at its next start.
+
+import os
+import struct
+import sys
+
+PATH = "/usr/sbin/NetworkManager"
+
+TAIL = struct.pack(
+    "<4I",
+    0x52800022,  # mov w2, #1           NM_UNMAN_FLAG_OP_SET_UNMANAGED
+    0xAA1303E0,  # mov x0, x19          the device
+    0x2A0203E1,  # mov w1, w2           NM_UNMANAGED_MANAGER_DISABLED
+    0x528004A3,  # mov w3, #37          NM_DEVICE_STATE_REASON_SLEEPING
+)
+OLD = struct.pack("<I", 0x340000C0) + TAIL  # cbz w0, +0x18 (past the take-down)
+NEW = struct.pack("<I", 0x14000006) + TAIL  # b +0x18
+
+
+def main() -> int:
+    try:
+        data = open(PATH, "rb").read()
+    except OSError as e:
+        print(f"sfduo-nm-wake-fix: {e}", file=sys.stderr)
+        return 0
+    if data.count(NEW) == 1 and OLD not in data:
+        return 0
+    if data.count(OLD) != 1:
+        print(f"sfduo-nm-wake-fix: {PATH} is not the code this fixes - left alone", file=sys.stderr)
+        return 0
+    at = data.index(OLD)
+    if at % 4:
+        print("sfduo-nm-wake-fix: unaligned match - left alone", file=sys.stderr)
+        return 0
+    fixed = data[:at] + NEW + data[at + len(NEW):]
+    tmp = PATH + ".sfduo-new"
+    with open(tmp, "wb") as f:
+        f.write(fixed)
+    st = os.stat(PATH)
+    os.chmod(tmp, st.st_mode & 0o7777)
+    os.chown(tmp, st.st_uid, st.st_gid)
+    os.rename(tmp, PATH)
+    print(f"sfduo-nm-wake-fix: {PATH} fixed (Wi-Fi left up after a resume)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

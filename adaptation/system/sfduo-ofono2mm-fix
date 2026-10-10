@@ -1,0 +1,64 @@
+#!/usr/bin/python3
+# sfduo-ofono2mm-fix: ofono2mm's bearer let go of for good when
+# NetworkManager disconnects it (measured 2026-10-06).
+#
+# NetworkManager disconnects mobile data before each suspend. ofono2mm
+# (Droidian's ModemManager in front of ofono) has one bearer per
+# NetworkManager profile - here "internet" and "Mobile data" - all watching
+# the one ofono context. Disconnect cleared only its own bearer's "wanted"
+# flag, and only after ofono answered; the context's going reached the
+# other bearer (and this one, while it waited) as a drop, and it connected
+# straight back. The modem brought data up as the phone went down; the
+# suspend aborted (IPA_CLIENT_APPS_LAN_CONS pending) or ended seconds later
+# on glink-native: 1342 resumes in a night, 66% to 30% in 7.5 h.
+#
+# Fixed in place in /usr/lib/ofono2mm/ofono2mm/mm_bearer.py: every bearer
+# on the context is no longer wanted before it is deactivated. Run by the
+# adaptation package's postinst and again (a dpkg trigger) whenever ofono2mm
+# is updated; does nothing if the code is not what it fixes (fixed already,
+# or changed upstream). Takes effect when ofono2mm next starts - at boot:
+# restarting ModemManager under a running session made ofono2mm fail at
+# start (dbus_next's BlockingIOError) until the phone was rebooted.
+
+import sys
+
+PATH = "/usr/lib/ofono2mm/ofono2mm/mm_bearer.py"
+
+OLD = """    async def doDisconnect(self):
+        ofono_ctx_interface = self.ofono_client["ofono_context"][self.ofono_ctx]['org.ofono.ConnectionContext']
+        await ofono_ctx_interface.call_set_property("Active", Variant('b', False))
+        self.active = False
+"""
+
+NEW = """    async def doDisconnect(self):
+        # sfduo-ofono2mm-fix: not wanted any more before it goes - by any
+        # bearer on this context (each NetworkManager profile has its own,
+        # all watching the one ofono context), so its going is not taken
+        # for a drop to connect again from.
+        for bearer in list(self.mm_modem.bearers.values()):
+            if getattr(bearer, 'ofono_ctx', None) == self.ofono_ctx:
+                bearer.active = False
+        self.active = False
+        ofono_ctx_interface = self.ofono_client["ofono_context"][self.ofono_ctx]['org.ofono.ConnectionContext']
+        await ofono_ctx_interface.call_set_property("Active", Variant('b', False))
+"""
+
+
+def main():
+    try:
+        text = open(PATH).read()
+    except OSError:
+        return 0  # ofono2mm not installed
+    if "sfduo-ofono2mm-fix" in text:
+        return 0
+    if text.count(OLD) != 1:
+        print(f"sfduo-ofono2mm-fix: {PATH} is not as expected, left alone", file=sys.stderr)
+        return 0
+    with open(PATH, "w") as f:
+        f.write(text.replace(OLD, NEW))
+    print("sfduo-ofono2mm-fix: ofono2mm's bearers let go together (at its next start)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

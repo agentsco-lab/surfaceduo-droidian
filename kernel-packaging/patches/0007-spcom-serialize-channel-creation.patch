@@ -1,0 +1,36 @@
+diff --git a/drivers/soc/qcom/spcom.c b/drivers/soc/qcom/spcom.c
+index c51bff9d4..3bc7a98f5 100644
+--- a/drivers/soc/qcom/spcom.c
++++ b/drivers/soc/qcom/spcom.c
+@@ -1664,11 +1664,31 @@ static const struct file_operations fops = {
+ 	.release = spcom_device_release,
+ };
+ 
++/*
++ * Channels are created from several user space threads at once when the SP
++ * link comes up (spdaemon and sec_nvm's four): finding a free slot and the
++ * char-dev minor (from chdev_count) must not interleave, or two channels get
++ * the same minor and the second device_create() fails.
++ */
++static DEFINE_MUTEX(spcom_create_lock);
++
++static int __spcom_create_channel_chardev(const char *name);
++
+ /**
+  * spcom_create_channel_chardev() - Create a channel char-dev node file
+  * for user space interface
+  */
+ static int spcom_create_channel_chardev(const char *name)
++{
++	int ret;
++
++	mutex_lock(&spcom_create_lock);
++	ret = __spcom_create_channel_chardev(name);
++	mutex_unlock(&spcom_create_lock);
++	return ret;
++}
++
++static int __spcom_create_channel_chardev(const char *name)
+ {
+ 	int ret;
+ 	struct device *dev;

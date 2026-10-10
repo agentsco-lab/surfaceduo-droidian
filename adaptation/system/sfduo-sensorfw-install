@@ -1,5 +1,5 @@
 #!/bin/sh
-# sfduo-sensorfw-install: the hinge-angle sensor for sensorfw.
+# sfduo-sensorfw-install: the hinge-angle and posture sensors for sensorfw.
 #
 # The Duo's hinge angle (android.sensor.hinge_angle, the SLPI's sns_fold) is
 # a sensor type sensorfw does not know. sensorfw-hinge-patch/ in the port's
@@ -26,9 +26,13 @@ else
     echo "sfduo-sensorfw: installing sensorfw $want (was ${have:-none}) with the hinge sensor"
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$DEBS"/*.deb
 fi
-# The plugin only loads if it is mapped in the config sensorfwd reads
+# The plugins only load if they are mapped in the config sensorfwd reads
 if ! grep -q '^hingeadaptor = hybrishingeadaptor' "$CONF" 2>/dev/null; then
     printf '\n[plugins]\nhingeadaptor = hybrishingeadaptor\n' >> "$CONF"
+fi
+# Microsoft's posture sensor (#116), under the hinge's line, in its group
+if ! grep -q '^postureadaptor = hybrispostureadaptor' "$CONF" 2>/dev/null; then
+    sed -i '/^hingeadaptor = hybrishingeadaptor$/a postureadaptor = hybrispostureadaptor' "$CONF"
 fi
 systemctl daemon-reload
 systemctl restart sensorfwd
@@ -39,4 +43,10 @@ if dbus-send --system --print-reply --dest=com.nokia.SensorService /SensorManage
 else
     echo "sfduo-sensorfw: hingesensor did not load - see journalctl -u sensorfwd" >&2
     exit 1
+fi
+if dbus-send --system --print-reply --dest=com.nokia.SensorService /SensorManager \
+       local.SensorManager.loadPlugin string:posturesensor 2>/dev/null | grep -q true; then
+    echo "sfduo-sensorfw: posturesensor loads; Microsoft's posture is at /SensorManager/posturesensor (local.PostureSensor)"
+else
+    echo "sfduo-sensorfw: posturesensor did not load - see journalctl -u sensorfwd" >&2
 fi

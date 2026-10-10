@@ -1,4 +1,4 @@
-# Hinge-angle sensor for sensorfw (Surface Duo posture)
+# Hinge-angle and posture sensors for sensorfw (Surface Duo)
 
 The Duo's hinge angle (0-360°, `android.sensor.hinge_angle`, type 36,
 served by the MS `sns_fold` sensor on the SLPI) is not a sensor type
@@ -8,9 +8,54 @@ sensorfw knows about. This patch adds a `hybrishingeadaptor` +
 Verified on device 2026-07-11: fold the device and degrees stream in
 real time (146→167→152→120→156° in one test).
 
+## Microsoft's posture sensor (added 2026-10-03, 0.14.8+itemae2)
+
+The sensors HAL also serves Microsoft's own **Posture** sensor (vendor type
+33171009, 17 postures, which panel faces the user among them - item-tracker
+#116), and sensorfw ignores vendor types. A `hybrispostureadaptor` +
+`posturesensor` pair, built as the hinge's, publishes its first value over
+DBus (`/SensorManager/posturesensor`, `local.PostureSensor`) and logs the
+first four values at each change (`journalctl -u sensorfwd`, "Surface
+posture:"), to be read against the ways the Duo is held - Microsoft does not
+publish what they mean.
+
+What its values mean, read on the device (2026-10-03), the first of the four:
+
+| value | the Duo |
+|---|---|
+| 0 | closed |
+| 3 | open as a book or a laptop (~100°) |
+| 5 | flat |
+| 7 | closing |
+| 13 | on the way to back to back |
+| 11 | back to back, the **left** panel facing the user |
+| 9 | back to back, the **right** panel facing the user |
+
+The third value repeats the facing as flags (32+2 for left, 32+1 for right;
+12 in a turn); the fourth looks like a confidence (0 in a turn, 0.5-1 at
+rest).
+
+**Ask for an interval.** Started without one (`setInterval` on the session
+before `start`), the sensor reports once and never again. With 100 ms it
+reports each change. `sfduo-posture` does this, and publishes `Surface` (the
+value) and `Facing` (left or right) - when run with `SFDUO_POSTURE_SURFACE=1`;
+nothing uses them yet.
+
+**Connect the data socket.** sensorfw takes a session whose client has not
+connected `/run/sensord.sock` (and written its session number there) within
+ten seconds of `requestSensor` for lost, and stops its sensor. A client that
+only polls the D-Bus property sees the value freeze after ten seconds.
+
+Map it as the hinge's:
+
+```
+postureadaptor = hybrispostureadaptor
+```
+
 ## What's here
 
-- `hinge-core.patch` - changes to existing sensorfw files:
+- `core.patch` - changes to existing sensorfw files (the hinge's and the
+  posture's):
   `core/hybrisadaptor.{h,cpp}` (SENSOR_TYPE_HINGE_ANGLE), registration
   in `adaptors/adaptors.pro` + `sensors/sensors.pro`, and the new
   plugin `.so`s added to `debian/libsensorfw-qt6-plugins.install`.
@@ -25,12 +70,61 @@ git clone https://github.com/sailfishos/sensorfw.git   # droidian uses the qt6 b
 # use the same source the droidian package was built from:
 #   apt source sensorfw-qt6      (on the device or any droidian chroot)
 cd sensorfw
-git apply /path/to/hinge-core.patch
+git apply /path/to/core.patch
 cp -r /path/to/new-files/* .
 dpkg-buildpackage -us -uc -b       # arm64; a qemu-aarch64 chroot of the
-                                   # droidian rootfs works (~1.5 h), needs
+                                   # droidian rootfs works but is slow, needs
                                    # debhelper + qt6 build-deps installed
 ```
+
+Built on the Duo itself (a chroot of a copy of its rootfs, 2026-10-03), it
+takes about half an hour, and two traps show up:
+
+- A newer GCC rejects `qt-api/socketreader.h` without `<QDebug>`. The include
+  is in `core.patch`.
+- Under the Duo's 4.14 kernel, `qmake6 -install qinstall` fails with "Invalid
+  argument" when it copies a file, so `make install` and `debian/rules`
+  stop. In the build chroot, use a stand-in:
+  - a `qinstall-shim` that does the same with `install -D` (and `cp -a` for
+    directories);
+  - run the build with `MAKEFLAGS="QINSTALL=qinstall-shim
+    QINSTALL_PROGRAM=qinstall-shim-exe"`;
+  - point the direct call in `debian/rules` at the shim.
+  This is a build-machine problem only; the packages are the same.
+
+## A client gone without a word (0.14.8+itemae3, 2026-10-07)
+
+A client killed outright (item/grid's `duo-motion`, when its ssh drops)
+left its session in sensorfwd: the sensor went on streaming at ~100 Hz
+into the closed socket ("failed to write payload to the socket: Remote
+closed" ~100 a second), all night - the phone kept waking, the journal
+flooded. Two causes in `core/`:
+
+- `SocketHandler` connected the socket's `error(...)` signal by its Qt5
+  name; in Qt6 it is `errorOccurred(...)`, so the connect failed ("No such
+  signal") and a dead client was never noticed. Now `errorOccurred`, and a
+  write that fails on a socket no longer connected loses the session
+  (`lostSession`, once).
+- `SensorManager::lostClient` stopped only a sensor whose request list held
+  the session; one still streamed to it after its request was gone. Now a
+  lost session not on any list is stopped on every channel, and its socket
+  dropped.
+
+Check: `kill -KILL $(pidof duo-motion)`, then
+`journalctl -u sensorfwd --since -10s | grep -c "Remote closed"` stays at a
+few, not hundreds.
+
+Building it on the Duo (2026-10-07): an overlay over its own root
+(`lowerdir=/`, upper on /userdata), /proc /sys /dev /dev/pts bound in.
+**Not /run**: with it bound, a package's maintainer scripts reached the
+phone's running systemd and restarted services under it (2026-10-08: sshd
+reset every connection after a NetworkManager build pulled packages from
+Debian sid). Copy resolv.conf in instead, and put a `policy-rc.d` that
+exits 101 in the overlay so nothing is started or restarted. Droidian's repo no longer carries
+`libgbinder-dev` / `libglibutil-dev`: taken from Debian trixie inside the
+overlay only (pinned at 100). Leave `android-headers` out of the apt list
+(a virtual package; libhybris-dev brings the headers). Run it under
+`systemd-inhibit --what=sleep:idle`.
 
 ## Install traps (all hit in practice)
 

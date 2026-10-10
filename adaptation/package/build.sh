@@ -11,7 +11,7 @@ ACCESS="$HERE/../access"
 SYSTEM="$HERE/../system"
 SHELLDIR="$HERE/../shell"
 BUSYBOX="$ROOT/out/busybox-arm64"
-VER="${1:-0.21.0}"
+VER="${1:-0.22.0}"
 OUT="$ROOT/out"
 PKG="$OUT/pkgroot"
 
@@ -301,20 +301,98 @@ SSUSB=/sys/bus/platform/devices/a600000.ssusb
 G=/sys/kernel/config/usb_gadget/sfduo
 case "$1" in
     pre)
-        cat $G/UDC 2>/dev/null > /run/sfduo-udc-saved
+        # Kept unbound already (a resume without a cable): what was saved stays.
+        U=$(cat $G/UDC 2>/dev/null)
+        [ -n "$U" ] && echo "$U" > /run/sfduo-udc-saved
         echo "" > $G/UDC 2>/dev/null
         echo none > $SSUSB/mode 2>/dev/null
         ;;
     post)
-        echo peripheral > $SSUSB/mode 2>/dev/null
-        sleep 1
-        UDC=$(cat /run/sfduo-udc-saved 2>/dev/null)
-        [ -n "$UDC" ] && echo "$UDC" > $G/UDC 2>/dev/null
+        # No cable: the gadget left unbound till one comes (sfduo-usb-plug,
+        # from udev) - bound again at every resume, it made rndis0 anew,
+        # NetworkManager's netlink events broke the next suspend and two
+        # seconds were spent awake here each time (2026-10-07: ~6 min an
+        # hour awake, the lid shut).
+        [ "$(cat /sys/class/power_supply/usb/present 2>/dev/null)" = 1 ] || exit 0
+        exec /usr/local/sbin/sfduo-usb-plug resume
         ;;
 esac
 exit 0
 SLEEP
 chmod 755 "$PKG/usr/lib/systemd/system-sleep/sfduo-usb"
+cat > "$PKG/usr/local/sbin/sfduo-usb-plug" <<'PLUG'
+#!/bin/sh
+# The USB gadget bound again after a sleep: at the resume with a cable in
+# (sfduo-usb, "resume"), or when a cable comes after one without (udev).
+# One at a time: udev says a cable came several times over, and bindings
+# made at once broke the controller (DWC3_CONTROLLER_ERROR_EVENT, "failed
+# to stop controller", 2026-10-07).
+exec 9>/run/sfduo-usb-plug.lock
+flock 9
+SSUSB=/sys/bus/platform/devices/a600000.ssusb
+G=/sys/kernel/config/usb_gadget/sfduo
+[ -n "$(cat $G/UDC 2>/dev/null)" ] && exit 0
+UDC=$(cat /run/sfduo-udc-saved 2>/dev/null)
+[ -n "$UDC" ] || UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
+[ -n "$UDC" ] || exit 0
+# "peripheral" here tells msm-dwc3 a cable is in (its VBUS session):
+# written with none in, the controller sat in a session of its own, and
+# the cable plugged in later went unseen until plugged again.
+[ "$(cat /sys/class/power_supply/usb/present 2>/dev/null)" = 1 ] && echo peripheral > $SSUSB/mode 2>/dev/null
+sleep 1
+echo "$UDC" > $G/UDC 2>/dev/null
+# The gadget bound again makes its network interface anew: its address, as
+# sfduo-usb-gadget.sh gives it at boot.
+sleep 1
+for IFACE in usb0 rndis0; do
+    ip link show "$IFACE" >/dev/null 2>&1 || continue
+    ip addr add 172.16.42.1/24 dev "$IFACE" 2>/dev/null
+    ip link set "$IFACE" up
+done
+exit 0
+PLUG
+chmod 755 "$PKG/usr/local/sbin/sfduo-usb-plug"
+cat > "$PKG/etc/udev/rules.d/99-sfduo-usb-plug.rules" <<'RULES'
+# A cable after a sleep without one: the USB gadget bound again (sfduo-usb).
+SUBSYSTEM=="power_supply", KERNEL=="usb", ACTION=="change", ATTR{present}=="1", RUN+="/usr/bin/systemd-run --no-block --collect /usr/local/sbin/sfduo-usb-plug"
+RULES
+# Expedited RCU for the way into sleep only (2026-10-02, measured with the
+# power:suspend_resume and cpuhp trace events): Android's init leaves
+# rcu_normal=1 after boot, and each core's sched_cpu_deactivate then waited
+# 3-6 s for a grace period - the seven cores 34 s of a 43 s way into sleep,
+# while a lid opened in it waited for the end. Expedited it is 0.06 s and
+# the whole way some 2 s. Back to normal after: expedited grace periods
+# poke every core, which costs while awake.
+cat > "$PKG/usr/lib/systemd/system-sleep/sfduo-rcu" <<'SLEEP'
+#!/bin/sh
+case "$1" in
+    pre)
+        echo 0 > /sys/kernel/rcu_normal 2>/dev/null
+        echo 1 > /sys/kernel/rcu_expedited 2>/dev/null
+        ;;
+    post)
+        echo 0 > /sys/kernel/rcu_expedited 2>/dev/null
+        echo 1 > /sys/kernel/rcu_normal 2>/dev/null
+        ;;
+esac
+exit 0
+SLEEP
+chmod 755 "$PKG/usr/lib/systemd/system-sleep/sfduo-rcu"
+# The wakeup count saved before sleeping, as Android's suspend does
+# (2026-10-02): systemd-sleep writes /sys/power/state straight, and then the
+# kernel gives a sleep up only for a wakeup interrupt at its very end - the
+# lid opened, or the shell's wakelock taken, during the way in lost to it
+# (the screen lit, went dark with the phone, came back: a blink). With the
+# count saved, any wakeup event after it makes the kernel give the sleep up
+# at once. Reading the count waits while a wakeup source is active: given a
+# second, and skipped then (the sleep goes on as before).
+cat > "$PKG/usr/lib/systemd/system-sleep/sfduo-wakeup-count" <<'SLEEP'
+#!/bin/sh
+[ "$1" = pre ] || exit 0
+C=$(timeout 1 cat /sys/power/wakeup_count 2>/dev/null) && echo "$C" > /sys/power/wakeup_count 2>/dev/null
+exit 0
+SLEEP
+chmod 755 "$PKG/usr/lib/systemd/system-sleep/sfduo-wakeup-count"
 
 # Panels re-init at resume and can reset their DCS brightness register
 # to hardware default (max) while gsd-power still holds the user value -
@@ -324,6 +402,8 @@ chmod 755 "$PKG/usr/lib/systemd/system-sleep/sfduo-usb"
 cat > "$PKG/usr/lib/systemd/system-sleep/sfduo-brightness" <<'SLEEP'
 #!/bin/sh
 [ "$1" = "post" ] || exit 0
+# item keeps the panels' brightness itself (gsd-power's is not done).
+pgrep -x item-compositor >/dev/null && exit 0
 (
   ENV="XDG_RUNTIME_DIR=/run/user/32011 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/32011/bus"
   for i in 1 2 3 4 5; do
@@ -343,11 +423,19 @@ chmod 755 "$PKG/usr/lib/systemd/system-sleep/sfduo-brightness"
 # The keypress/finger-touch that wakes the SoC is consumed during resume
 # and never reaches the compositor - phosh stays blanked and a short
 # power press "looks dead". Inject KEY_WAKEUP after every resume so the
-# lockscreen lights up regardless of what woke us.
+# lockscreen lights up regardless of what woke us. Only under phosh, which
+# needs it: a shell that reads what woke the phone itself
+# (/sys/power/pm_wakeup_irq) lights the screen as it sees fit, and a
+# nudge after every resume - a Wi-Fi packet's too - would light it for
+# nothing. Detached and bounded:
+# systemd-sleep waits for a hook's output to close, and the python left
+# holding it kept "resumed" from being said for 90 s - the network and
+# the modem asleep all that while (2026-10-02).
 cat > "$PKG/usr/lib/systemd/system-sleep/sfduo-unblank" <<'SLEEP'
 #!/bin/sh
 [ "$1" = "post" ] || exit 0
-python3 - <<PY &
+pgrep -x phosh >/dev/null || exit 0
+setsid timeout 5 python3 - > /dev/null 2>&1 < /dev/null <<PY &
 from evdev import UInput, ecodes as e
 ui = UInput({e.EV_KEY: [e.KEY_WAKEUP]}, name="sfduo-wake-nudge")
 ui.write(e.EV_KEY, e.KEY_WAKEUP, 1); ui.syn()
@@ -507,11 +595,39 @@ mkdir -p "$PKG/etc/sensorfw"
 cat > "$PKG/etc/sensorfw/70-sfduo-surfaceduo.conf" <<'SFW'
 [plugins]
 hingeadaptor = hybrishingeadaptor
+postureadaptor = hybrispostureadaptor
 SFW
 # NOTE: sensorfwd runs with -c=/etc/sensorfw/sensord-hybris.conf and reads
 # ONLY that file (no conf.d!) - the 70- file above is documentation-ware;
 # the postinst appends the mapping to the real config (verified working:
 # live hinge degrees over DBus 2026-07-11).
+
+# iio-sensor-proxy (Droidian's hadess-sensorfw-proxy drop-in) is BindsTo=
+# sensorfwd: a crash of sensorfwd stopped it, and systemd's automatic restart
+# of sensorfwd never started it again - rotation and the light sensor gone
+# until a reboot (item-tracker #83, checked 2026-10-03 with kill -9). Pulled
+# in on each start of sensorfwd, the automatic restart included.
+# Two units that fail at every boot, masked (removing this package removes
+# the links): nfcd waits for Android's NFC HAL, and the Duo 1 has no NFC;
+# lxc-net sets up a NAT bridge for LXC containers, and this kernel has no
+# MASQUERADE target nor an ip6 nat table. The Android container (lxc@android)
+# does not use it - it is on the host's network - and lxc.service only Wants
+# it. A container that wants NAT (Waydroid, item-tracker #133) needs those in
+# the kernel first.
+mkdir -p "$PKG/etc/systemd/system"
+ln -s /dev/null "$PKG/etc/systemd/system/nfcd.service"
+ln -s /dev/null "$PKG/etc/systemd/system/lxc-net.service"
+
+# The journal: without a cap journald keeps 10 % of the filesystem (1.5 GB
+# seen on 2026-10-03, 809 MB of an 8 GB rootfs before; item-tracker #92).
+# 500 MB: a busy day of debugging fills ~200 MB, and past boots are what
+# debugging reads; on the 90 GB rootfs it costs nothing.
+mkdir -p "$PKG/usr/lib/systemd/journald.conf.d"
+printf '[Journal]\nSystemMaxUse=500M\n' > "$PKG/usr/lib/systemd/journald.conf.d/60-sfduo-size.conf"
+
+mkdir -p "$PKG/etc/systemd/system/sensorfwd.service.d"
+printf '[Unit]\nWants=iio-sensor-proxy.service\n' \
+    > "$PKG/etc/systemd/system/sensorfwd.service.d/60-sfduo-sensor-proxy.conf"
 
 # Tame vendor daemons that hurt the system (findings 2026-07-11):
 # adsprpcd x2 spin at 33% CPU each on a fastrpc ioctl (0xc00c5211) our
@@ -707,6 +823,11 @@ cat > "$PKG/usr/local/sbin/sfduo-lid-daemon" <<'LID'
 # edges are lost while the system sleeps, so state is reconciled, not
 # just edge-triggered (unfold-while-asleep used to leave the system
 # convinced the lid was still closed).
+#
+# With the boot image's DTB declaring the sensor as gpio-keys (input
+# "Surface Duo Lid", a wakeup source: opening wakes the phone) the kernel
+# gives SW_LID itself and holds the GPIO: then the lid is read from that
+# device, no switch of our own is made, and the rest is done as before.
 import os, struct, fcntl, select, subprocess, time
 
 GPIO = "/sys/class/gpio/gpio121"
@@ -725,13 +846,31 @@ def setup_gpio():
     with open(GPIO + "/edge", "w") as f:
         f.write("both")
 
-def make_uinput():
+KERNEL_LID = "Surface Duo Lid"
+
+def kernel_lid():
+    """The kernel's lid switch (gpio-keys from the DTB): its event node."""
+    for d in sorted(os.listdir("/sys/class/input")):
+        try:
+            with open("/sys/class/input/%s/name" % d) as f:
+                if f.read().strip() != KERNEL_LID:
+                    continue
+        except OSError:
+            continue
+        for e in os.listdir("/sys/class/input/" + d):
+            if e.startswith("event"):
+                return "/dev/input/" + e
+    return None
+
+def make_uinput(lid=True):
     fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
-    fcntl.ioctl(fd, UI_SET_EVBIT, EV_SW)
-    fcntl.ioctl(fd, UI_SET_SWBIT, SW_LID)
+    if lid:
+        fcntl.ioctl(fd, UI_SET_EVBIT, EV_SW)
+        fcntl.ioctl(fd, UI_SET_SWBIT, SW_LID)
     fcntl.ioctl(fd, UI_SET_EVBIT, EV_KEY)
     fcntl.ioctl(fd, UI_SET_KEYBIT, KEY_WAKEUP)
-    dev = struct.pack("80sHHHHi", b"Surface Duo Lid Switch", 0x19, 0, 0, 0, 0)
+    name = b"Surface Duo Lid Switch" if lid else b"Surface Duo Lid Wakeup"
+    dev = struct.pack("80sHHHHi", name, 0x19, 0, 0, 0, 0)
     dev += b"\x00" * (64 * 4 * 4)
     os.write(fd, dev)
     fcntl.ioctl(fd, UI_DEV_CREATE)
@@ -812,6 +951,19 @@ def panels_lit():
             pass
     return False
 
+def mdns(on):
+    """avahi (mDNS) with the lid: closed, it is stopped, socket and all (a
+    client's asking would start it again). Joined to 224.0.0.251, the Wi-Fi
+    firmware woke the sleeping phone for every mDNS packet on the network -
+    every one of the Wi-Fi wakes read on 2026-10-02 was one. Android stops
+    its network discovery with the screen off too. Not waited for."""
+    units = ["avahi-daemon.socket", "avahi-daemon.service"]
+    try:
+        subprocess.Popen(["systemctl", "start" if on else "stop"] + units,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
 def screens_on(fd):
     ev(fd, EV_KEY, KEY_WAKEUP, 1); ev(fd, EV_SYN, 0, 0)
     ev(fd, EV_KEY, KEY_WAKEUP, 0); ev(fd, EV_SYN, 0, 0)
@@ -824,32 +976,65 @@ def screens_on(fd):
     restore_brightness()
     display_power(0)
 
-def main():
-    setup_gpio()
-    ufd = make_uinput()
-    vfd = os.open(GPIO + "/value", os.O_RDONLY)
+EVIOCGSW_8 = 0x8008451b         # EVIOCGSW(8): the switches' state
+EVENT = struct.Struct("llHHi")
 
-    def read_val():
-        os.lseek(vfd, 0, os.SEEK_SET)
-        return int(os.read(vfd, 8).strip())
+def main():
+    node = kernel_lid()
+    if node:
+        # The kernel's switch: its state asked, its events read (debounced
+        # in the kernel); 1 is open, as the GPIO's value.
+        ufd = make_uinput(lid=False)
+        efd = os.open(node, os.O_RDONLY | os.O_NONBLOCK)
+
+        def read_val():
+            buf = bytearray(8)
+            fcntl.ioctl(efd, EVIOCGSW_8, buf)
+            return 0 if buf[0] & (1 << SW_LID) else 1
+
+        def wait():
+            po.poll(2000)
+            try:
+                while os.read(efd, EVENT.size * 64):
+                    pass
+            except BlockingIOError:
+                pass
+        po = select.poll()
+        po.register(efd, select.POLLIN)
+    else:
+        setup_gpio()
+        ufd = make_uinput()
+        vfd = os.open(GPIO + "/value", os.O_RDONLY)
+
+        def read_val():
+            os.lseek(vfd, 0, os.SEEK_SET)
+            return int(os.read(vfd, 8).strip())
+
+        def wait():
+            po.poll(2000)          # edge OR 2s reconcile tick
+            time.sleep(0.05)       # debounce the magnet bounce
+        po = select.poll()
+        po.register(vfd, select.POLLPRI | select.POLLERR)
 
     last = read_val()
-    emit_lid(ufd, last == 0)
-    po = select.poll()
-    po.register(vfd, select.POLLPRI | select.POLLERR)
+    if not node:
+        emit_lid(ufd, last == 0)
+    if last == 0:
+        mdns(False)
     lit = 0                    # ticks the panels have been lit while closed
     while True:
-        po.poll(2000)          # edge OR 2s reconcile tick
-        time.sleep(0.05)       # debounce the magnet bounce
+        wait()
         val = read_val()
         if val != last:
             last = val
             lit = 0
-            emit_lid(ufd, val == 0)
+            if not node:
+                emit_lid(ufd, val == 0)
             if val == 1:
                 screens_on(ufd)
             else:
                 display_power(3)
+            mdns(val == 1)
         elif val == 0:
             # Closed, and something lit the display anyway - a call, a
             # critical notification, the power key - and with idle blanking
@@ -888,6 +1073,15 @@ mkdir -p "$PKG/usr/lib/systemd/system/lxc@android.service.d"
 printf '[Service]\nExecStart=\nExecStart=/usr/local/sbin/sfduo-lxc-notify\n' \
     > "$PKG/usr/lib/systemd/system/lxc@android.service.d/10-sfduo-notify.conf"
 
+# No LLMNR (nor resolved's mDNS): its groups (224.0.0.252, ff02::1:3) on
+# wlan0 are more multicast for the Wi-Fi firmware to wake the phone for,
+# for a Windows naming scheme a phone has no use of.
+mkdir -p "$PKG/etc/systemd/resolved.conf.d"
+cat > "$PKG/etc/systemd/resolved.conf.d/50-sfduo-no-llmnr.conf" <<'RESOLVED'
+[Resolve]
+LLMNR=no
+MulticastDNS=no
+RESOLVED
 cat > "$PKG/usr/lib/systemd/system/sfduo-lid.service" <<'UNIT'
 [Unit]
 Description=sfduo: fold sensor (GPIO 121) to SW_LID bridge
@@ -907,10 +1101,23 @@ install -m644 "$SYSTEM/sfduo-slot-guard.service" "$PKG/usr/lib/systemd/system/"
 install -m755 "$SYSTEM/sfduo-slot-guard" "$PKG/usr/local/sbin/"
 install -m644 "$SYSTEM/sfduo-modem.service"      "$PKG/usr/lib/systemd/system/"
 install -m755 "$SYSTEM/sfduo-modem"              "$PKG/usr/local/sbin/"
+# ofono2mm's bearers let go together when NetworkManager disconnects (each
+# suspend): fixed in place by postinst, and again whenever ofono2mm is
+# updated (the trigger below). See the script.
+install -m755 "$SYSTEM/sfduo-ofono2mm-fix"       "$PKG/usr/local/sbin/"
+install -m755 "$SYSTEM/sfduo-nm-wake-fix"        "$PKG/usr/local/sbin/"
+# Mobile data off while on Wi-Fi (NetworkManager's dispatcher): with it up,
+# each suspend let it go and the network's release woke the phone ~80 s
+# later, all night. See the script.
+install -d "$PKG/etc/NetworkManager/dispatcher.d"
+install -m755 "$SYSTEM/90-sfduo-mobile-data"     "$PKG/etc/NetworkManager/dispatcher.d/"
 # glycin decodes images without its bwrap sandbox: 1.3-1.8 s off the first
 # image of every GTK3 process, phosh at each session start among them
-# (../system/sfduo-bwrap says why and how to undo it)
-install -Dm755 "$SYSTEM/sfduo-bwrap" "$PKG/usr/local/bin/bwrap"
+# (../system/sfduo-bwrap says why and how to undo it). Mode 4755: the bit
+# does nothing on a script, but flatpak reads it off whatever bwrap it finds
+# on PATH, and without it sandboxes every app with a user namespace this
+# kernel cannot mount proc in - no flatpak ran from 0.20.0 to 0.21.4.
+install -Dm4755 "$SYSTEM/sfduo-bwrap" "$PKG/usr/local/bin/bwrap"
 install -Dm644 "$SYSTEM/99-sfduo-ofono.conf" "$PKG/etc/NetworkManager/conf.d/99-sfduo-ofono.conf"
 # The pen as a pen (#24): the digitizer's node split into a touchscreen and a
 # tablet with pressure and buttons (../system/sfduo-pen-split)
@@ -1091,6 +1298,7 @@ SHELL_SCALE=$(sed -n '/^\[output:HWCOMPOSER-1\]/,/^\[/{s/^scale = //p}' "$SHELLD
 python3 "$SHELLDIR/sfduo-shell-css" --scale "$SHELL_SCALE" \
     --template "$SHELLDIR/gtk.css.in" -o "$PKG/usr/share/sfduo/gtk.css"
 echo "/etc/phosh/phoc.ini" >> "$PKG/DEBIAN/conffiles"
+echo "/etc/NetworkManager/dispatcher.d/90-sfduo-mobile-data" >> "$PKG/DEBIAN/conffiles"
 
 cat > "$PKG/DEBIAN/control" <<EOF
 Package: adaptation-droidian-surfaceduo
@@ -1105,9 +1313,39 @@ Description: Surface Duo 1 adaptation for Droidian (sfduo)
  progresses, touch / wifi / sensor plumbing for the Microsoft Surface Duo 1.
 EOF
 
+# ssh: the droidian user's password is the PIN, four digits, and sshd
+# listens on every network - over Wi-Fi or mobile data it could be guessed
+# in minutes, and sudo takes the same PIN. A password only from the USB
+# link; everywhere else keys only (item/grid's are keys; root was keys only
+# already). Debian's sshd_config includes sshd_config.d first, so these win.
+mkdir -p "$PKG/etc/ssh/sshd_config.d"
+cat > "$PKG/etc/ssh/sshd_config.d/10-item-password-usb-only.conf" <<'SSHD'
+# The PIN is the password, four digits: over Wi-Fi or mobile data it could
+# be guessed. A password only from the USB link; elsewhere keys only.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+Match Address 172.16.42.0/24
+    PasswordAuthentication yes
+SSHD
+
+echo "interest-noawait /usr/lib/ofono2mm/ofono2mm/mm_bearer.py" > "$PKG/DEBIAN/triggers"
+echo "interest-noawait /usr/sbin/NetworkManager" >> "$PKG/DEBIAN/triggers"
+
 cat > "$PKG/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
+# ofono2mm or NetworkManager updated: their fixes again (sfduo-ofono2mm-fix,
+# sfduo-nm-wake-fix), nothing else. NetworkManager is not restarted for it
+# (an update over Wi-Fi would lose its own connection): the next boot.
+if [ "$1" = triggered ]; then
+    /usr/local/sbin/sfduo-ofono2mm-fix || true
+    /usr/local/sbin/sfduo-nm-wake-fix || true
+    exit 0
+fi
+/usr/local/sbin/sfduo-ofono2mm-fix || true
+/usr/local/sbin/sfduo-nm-wake-fix || true
+# sshd takes the USB-only password rule now (it is offline in a chroot)
+if systemctl is-active -q ssh 2>/dev/null && sshd -t 2>/dev/null; then systemctl reload ssh || true; fi
 # migrate off the hand-injected copies (shadow the packaged unit if left)
 rm -f /etc/systemd/system/sfduo-usb.service \
       /etc/systemd/system/multi-user.target.wants/sfduo-usb.service
@@ -1269,78 +1507,59 @@ if id droidian >/dev/null 2>&1; then
             /org/freedesktop/DBus org.freedesktop.DBus.ReloadConfig 2>/dev/null || true
     fi
 fi
-if [ -d /run/systemd/system ]; then
-    # `systemctl enable` reloads the manager every time, and on this kernel a
-    # reload is half a minute (a debug-heavy config: every allocation is
-    # checked). A dozen of them made the install take nine minutes. So:
-    # enable without reloading, reload once, then start.
-    START=""
-    en()     { systemctl --no-reload enable "$@"; }
-    en_now() { systemctl --no-reload enable "$@" && START="$START $*"; }
-    systemctl daemon-reload
-    en sfduo-slot-guard.service || true
-    en_now sfduo-modem.service || true
-    en_now sfduo-modem-watch.service || true
-    en_now sfduo-pen-split.service || true
-    en_now sfduo-boost.service || true
-    en_now sfduo-cpufreq.service || true
-    en_now sfduo-usb.service || true
-    en bluebinder.service bluetooth.service 2>/dev/null || true
-    en sfduo-composer-watchdog.service || true
-    en_now sfduo-lid.service || true
-    en_now sfduo-writeback.timer || true
-    en_now sfduo-wakeup.service || true
-    # at the next boot, not in the middle of an install (#157)
-    en sfduo-grow-rootfs.service || true
+# The same units enabled whether systemd runs or not (an image built in a
+# chroot): `systemctl enable` only makes links. Offline it once enabled a
+# hand-picked few and left wlan, wowlan, lid, wakeup, the composer watchdog,
+# writeback and bluetooth off - the release image came up without wifi,
+# bluebinder failing in a loop for want of an address, and froze ten minutes
+# in (2026-10-04). Only the reload and the starts need a running systemd.
+RUNNING=; [ -d /run/systemd/system ] && RUNNING=1
+# `systemctl enable` reloads the manager every time, and on this kernel a
+# reload is half a minute (a debug-heavy config: every allocation is
+# checked). A dozen of them made the install take nine minutes. So: enable
+# without reloading, reload once, then start.
+START=""
+en()     { systemctl --no-reload enable "$@"; }
+en_now() { systemctl --no-reload enable "$@" && START="$START $*"; }
+[ -n "$RUNNING" ] && systemctl daemon-reload
+en sfduo-slot-guard.service || true
+en_now sfduo-modem.service || true
+en_now sfduo-modem-watch.service || true
+en_now sfduo-pen-split.service || true
+en_now sfduo-boost.service || true
+en_now sfduo-cpufreq.service || true
+en_now sfduo-usb.service || true
+en bluebinder.service bluetooth.service 2>/dev/null || true
+en sfduo-composer-watchdog.service || true
+en_now sfduo-lid.service || true
+en_now sfduo-writeback.timer || true
+en_now sfduo-wakeup.service || true
+# at the next boot, not in the middle of an install (#157)
+en sfduo-grow-rootfs.service || true
+[ -d /usr/lib/sfduo/modules ] && en_now sfduo-wlan.service || true
+[ -e /usr/lib/systemd/system/sfduo-wowlan.service ] && en sfduo-wowlan.service || true
+# sfduo-tame-vendor kills adsprpcd, and sfduo-audio.service is what
+# boots the ADSP afterwards. Measured on hardware: adsprpcd cannot
+# bring the ADSP up on this port at all, so with no starter the
+# daemons just respawn and spin (~24% CPU each) against a subsystem
+# stuck at OFFLINING. Killing them there buys nothing, so the killer
+# only goes in alongside the starter.
+if [ -x /usr/local/sbin/sfduo-audio-up.sh ]; then
+    en sfduo-audio.service || true
+    en_now sfduo-tame-vendor.service || true
+else
+    echo "sfduo: built without audio modules, so there is no ADSP" >&2
+    echo "sfduo: starter. Expect adsprpcd to spin and bluetooth to" >&2
+    echo "sfduo: refuse to start (it would soft-lock the kernel)." >&2
+    echo "sfduo: Build the audio modules and reinstall." >&2
+fi
+if [ -n "$RUNNING" ]; then
     udevadm control --reload 2>/dev/null || true
     udevadm trigger -s backlight -s leds 2>/dev/null || true
-    [ -d /usr/lib/sfduo/modules ] && en_now sfduo-wlan.service || true
-    [ -e /usr/lib/systemd/system/sfduo-wowlan.service ] && en sfduo-wowlan.service || true
-    # sfduo-tame-vendor kills adsprpcd, and sfduo-audio.service is what
-    # boots the ADSP afterwards. Measured on hardware: adsprpcd cannot
-    # bring the ADSP up on this port at all, so with no starter the
-    # daemons just respawn and spin (~24% CPU each) against a subsystem
-    # stuck at OFFLINING. Killing them there buys nothing, so the killer
-    # only goes in alongside the starter.
-    if [ -x /usr/local/sbin/sfduo-audio-up.sh ]; then
-        en sfduo-audio.service || true
-        en_now sfduo-tame-vendor.service || true
-    else
-        echo "sfduo: built without audio modules, so there is no ADSP" >&2
-        echo "sfduo: starter. Expect adsprpcd to spin and bluetooth to" >&2
-        echo "sfduo: refuse to start (it would soft-lock the kernel)." >&2
-        echo "sfduo: Build the audio modules and reinstall." >&2
-    fi
     systemctl daemon-reload
     # --no-block: on a first boot this runs before multi-user.target, and a
     # unit that waits for the modem would hold the whole boot with it.
     for u in $START; do systemctl --no-block start "$u" || true; done
-else
-    ln -sf /usr/lib/systemd/system/sfduo-usb.service \
-       /etc/systemd/system/multi-user.target.wants/sfduo-usb.service
-    ln -sf /usr/lib/systemd/system/sfduo-slot-guard.service \
-       /etc/systemd/system/multi-user.target.wants/sfduo-slot-guard.service
-    ln -sf /usr/lib/systemd/system/sfduo-grow-rootfs.service \
-       /etc/systemd/system/multi-user.target.wants/sfduo-grow-rootfs.service
-    ln -sf /usr/lib/systemd/system/sfduo-modem.service \
-       /etc/systemd/system/multi-user.target.wants/sfduo-modem.service
-    ln -sf /usr/lib/systemd/system/sfduo-modem-watch.service \
-       /etc/systemd/system/multi-user.target.wants/sfduo-modem-watch.service
-    ln -sf /usr/lib/systemd/system/sfduo-pen-split.service \
-       /etc/systemd/system/multi-user.target.wants/sfduo-pen-split.service
-    ln -sf /usr/lib/systemd/system/sfduo-boost.service \
-       /etc/systemd/system/multi-user.target.wants/sfduo-boost.service
-    mkdir -p /etc/systemd/system/graphical.target.wants
-    ln -sf /usr/lib/systemd/system/sfduo-cpufreq.service \
-       /etc/systemd/system/graphical.target.wants/sfduo-cpufreq.service
-    # same pairing rule as above, offline: the ADSP starter and the
-    # adsprpcd killer go in together or not at all
-    if [ -x /usr/local/sbin/sfduo-audio-up.sh ]; then
-        ln -sf /usr/lib/systemd/system/sfduo-audio.service \
-           /etc/systemd/system/multi-user.target.wants/sfduo-audio.service
-        ln -sf /usr/lib/systemd/system/sfduo-tame-vendor.service \
-           /etc/systemd/system/multi-user.target.wants/sfduo-tame-vendor.service
-    fi
 fi
 # What the phone has no use for (#163), turned off - left installed - and
 # once only: a service turned back on by hand stays on through upgrades.

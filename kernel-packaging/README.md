@@ -8,7 +8,8 @@ Clone the kernel tree and the common fragments into the repo root:
 
 ```
 git clone --depth 1 -b surfaceduo/11/2022.902.48 \
-  https://github.com/microsoft/surface-duo-oss-kernel.msm-4.14
+  https://github.com/microsoft/surface-duo-oss-kernel.msm-4..14 \
+  surface-duo-oss-kernel.msm-4.14
 git clone -b 4.14-android https://github.com/droidian-devices/common_fragments.git
 ```
 
@@ -34,7 +35,8 @@ git -C ../surface-duo-oss-kernel.msm-4.14 apply \
   "$PWD"/patches/0001-dwc3-msm-force-suspend-when-not-in-lpm.patch \
   "$PWD"/patches/0002-adsprpc-ratelimit-bad-ioctl-log.patch \
   "$PWD"/patches/0004-ext4-remove-android-umount_end-hook.patch \
-  "$PWD"/patches/0006-sde-idle-power-collapse-off.patch
+  "$PWD"/patches/0006-sde-idle-power-collapse-off.patch \
+  "$PWD"/patches/0007-spcom-serialize-channel-creation.patch
 # 0003 applies inside techpack/audio - see "Audio modules" below
 # 0005 applies to the boot ramdisk - tools/make-boot-image.sh does it
 ```
@@ -269,3 +271,17 @@ under `lib/modules/<release>/kernel/techpack/audio/`; `dpkg-deb -x` and a
   and off in turn: no cost - the median came out 7-11 mA lower with it
   off. Turning it off through debugfs (`encoder*/idle_power_collapse`)
   does not hold: `sde_crtc_disable` turns it back on at every blank.
+- `spcom.c` (0007): serialize the creation of spcom channels. When the
+  secure processor's link comes up, spdaemon and sec_nvm's four threads
+  create their channels at once; the driver finds a free slot and takes
+  the char-dev minor from a counter with no lock, so two channels got
+  the same minor (`sysfs: cannot create duplicate filename
+  '/dev/char/239:6'`), spdaemon's own failed, it gave up ("Initial SP
+  initialization failed") and loaded none of the SP's apps. Gatekeeper
+  then waited for them forever in the first enrolment, single-threaded,
+  and answered nobody after it: droidian-fpd hung in `Enroll` (identify
+  never needs Gatekeeper, so unlocking with a finger worked). With the
+  lock: spdaemon loads cryptoapp, sp_keymaster and asym_cryptoapp, and a
+  finger enrolls (19 touches, 2026-10-02). The `macchiato` app still
+  fails to load (-22) and spdaemon still logs the initialization as
+  failed for it; nothing seen needs it.
