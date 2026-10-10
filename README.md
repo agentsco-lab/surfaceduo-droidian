@@ -153,7 +153,11 @@ Surface Duo 2 beside them, and how they are taken:
    phosh phone) from TWRP: only `data/rootfs.img` from the zip - never
    flash the zip - grown to 8 GB. Put the release's `.deb` in `out/` and
    inject it with `adaptation/ssh/inject-ssh-twrp.sh`. On Droidian 101,
-   0.18.0 is the release to use.
+   0.18.0 is the release to use. Or take the ready-made image - Droidian
+   102, this port and item, built by `tools/build-release-image.sh` - from
+   [item's releases](https://github.com/agentsco-lab/item/releases)
+   (`item-duo1-…`, with the kernel and the recovery), which is what
+   item/grid installs.
 6. `tools/flash-safely.sh ram-boot` - **RAM-boot only** until you have
    many boring-stable cycles behind you.
 7. The first boot installs the package and **reboots once, into
