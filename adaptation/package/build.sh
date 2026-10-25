@@ -182,7 +182,12 @@ AUDIO
     cat > "$PKG/usr/lib/systemd/system/sfduo-audio.service" <<'UNIT'
 [Unit]
 Description=sfduo: boot ADSP and load the audio techpack modules
-After=lxc@android.service sfduo-tame-vendor.service
+# As soon as the Android container is up - not after sfduo-tame-vendor,
+# whose 40 s of sleeps held the sound (pulseaudio, and the user's session
+# waiting for it) to ~55 s into every boot. Booted early on hardware, 8 boots
+# of 8 (2026-10-25/26): the ADSP ONLINE at ~16 s, the card registered,
+# adsprpcd idle at 0 %, pulseaudio up in 2 s instead of 38.
+After=lxc@android.service
 
 [Service]
 Type=oneshot
