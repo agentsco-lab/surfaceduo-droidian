@@ -172,6 +172,13 @@ JSON
 # The port's boot image with it, for phones coming from stock Android
 # (BOOT_IMG=out/boot-<...>.img: the one the phones run; VBMETA_IMG: the
 # port's, verification off; tools/release-add-boot.sh).
+# The boot and vbmeta a phone from stock needs (item/grid installs from
+# stock only from a release that has them, and took an older one when the
+# new one had none, 2026-10-25): the boot confirmed on a Duo and the
+# disabled vbmeta, unless given.
+BOOT_IMG="${BOOT_IMG-$ROOT/out/boot-duo1-droidian-perf-127-lid.img}"
+VBMETA_IMG="${VBMETA_IMG-$ROOT/out/backups/device-2026-09-18/vbmeta-disabled.img}"
+[ -z "$BOOT_IMG" ] || [ -f "$BOOT_IMG" ] || die "no boot image: $BOOT_IMG (BOOT_IMG= for a release without one)"
 if [ -n "${BOOT_IMG:-}" ]; then
     "$ROOT/tools/release-add-boot.sh" "$OUT" "$BOOT_IMG" "${VBMETA_IMG:-}"
 fi
