@@ -86,6 +86,10 @@ ch apt-get install -y -q --no-install-recommends python3-gi gir1.2-gtk-3.0 dconf
 echo "== the adaptation ($ADAPT_VER) and item ($ITEM_VER)"
 cp "$ADAPT" "$ITEM" "$MNT/var/tmp/"
 ch apt-get install -y -q --no-install-recommends "/var/tmp/$(basename "$ADAPT")" "/var/tmp/$(basename "$ITEM")"
+# item's Recommends that the image needs (installed above without them):
+# rsync and ssh for item-sync's black box (a fresh phone had no rsync, and
+# every sync from the computer failed in rsync's protocol, 2026-10-26).
+ch apt-get install -y -q --no-install-recommends rsync openssh-client
 echo "== sensorfw with the hinge and posture sensors"
 ch /usr/local/sbin/sfduo-sensorfw-install || true
 ch dpkg-query -W -f='${Version}\n' sensorfw-qt6 | grep -q itemae || die "sensorfw with the hinge sensor did not go in"
