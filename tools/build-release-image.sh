@@ -29,8 +29,8 @@ OWNER="${SUDO_USER:-root}"
 OWNER_HOME="$(getent passwd "$OWNER" | cut -d: -f6)"
 
 # The base: Droidian 102's phosh phone rootfs, api30, arm64 - pinned.
-BASE_ZIP="${BASE_ZIP:-$ROOT/out/102/fresh-0929/droidian-OFFICIAL-phosh-phone-rootfs-api30-arm64-next_20260929.zip}"
-BASE_SHA="${BASE_SHA:-473255080acb504338b789cbd9bf1361a025da14654e16a6335237e41f8a822c}"
+BASE_ZIP="${BASE_ZIP:-$ROOT/out/102/fresh-1023/droidian-OFFICIAL-phosh-phone-rootfs-api30-arm64-next_20261023.zip}"
+BASE_SHA="${BASE_SHA:-4773f0b2b2e1eea255af4313f766ceefa4aad7c4927f337102986edfbbf3b822}"
 ADAPT="${1:-$(ls "$ROOT"/out/adaptation-droidian-surfaceduo_*_arm64.deb 2>/dev/null | sort -V | tail -1)}"
 ITEM="${2:-$(ls -t "$OWNER_HOME"/Desktop/projects/item/item/compositor/target/deb/item_*_arm64.deb 2>/dev/null | head -1)}"
 [ -f "$BASE_ZIP" ] || die "no base: $BASE_ZIP"
@@ -100,11 +100,25 @@ done
 echo "== item as the shell (item-switch item, without starting anything)"
 ch systemctl disable phosh.service
 ch systemctl enable item.service item-face.service
+# As item-switch item does: phosh's sensor proxy masked (item reads
+# sensorfw itself; item.service wants sensorfwd, which the proxy pulled in).
+ch systemctl mask iio-sensor-proxy.service
 
 echo "== what the old first-boot path left for nothing"
 # The first-boot unit and its reboot are not needed: all of it is in.
 rm -f "$MNT/etc/systemd/system/multi-user.target.wants/sfduo-ssh-firstboot.service" "$MNT/etc/systemd/system/sfduo-ssh-firstboot.service"
 touch "$MNT/var/lib/sfduo-ssh-installed"
+
+echo "== the clock starts at the image's build, not 1970"
+# The Duo's RTC keeps no time for Linux: a fresh phone woke in 1970, and
+# every certificate failed (Chromium, Claude Code's sign-in, the weather)
+# until NTP answered - the setup itself ran in 1970 (2026-10-25).
+# systemd-timesyncd sets the clock at boot from this file's mtime when it
+# is later.
+mkdir -p "$MNT/var/lib/systemd/timesync"
+touch "$MNT/var/lib/systemd/timesync/clock"
+TS_UID=$(ch id -u systemd-timesync 2>/dev/null || echo)
+[ -n "$TS_UID" ] && chown -R "$TS_UID:$TS_UID" "$MNT/var/lib/systemd/timesync"
 
 echo "== made per phone on its first boot, not shipped"
 rm -f "$MNT"/etc/ssh/ssh_host_*
@@ -161,6 +175,22 @@ JSON
 if [ -n "${BOOT_IMG:-}" ]; then
     "$ROOT/tools/release-add-boot.sh" "$OUT" "$BOOT_IMG" "${VBMETA_IMG:-}"
 fi
+# The recovery item/grid boots for the install, in the release for a phone
+# coming from stock Android (item/grid finds it there): item-recovery
+# (item/grid's tools/build-recovery.sh), TWRP beside it as the fallback
+# item/grid takes when ours is missing; and the checksums of everything.
+RECOVERY_IMG="${RECOVERY_IMG:-$OWNER_HOME/.local/share/itemgrid/recovery/item-recovery.img}"
+if [ -f "$RECOVERY_IMG" ]; then
+    cp "$RECOVERY_IMG" "$OUT/item-recovery.img"
+else
+    echo "warning: no $RECOVERY_IMG: the release has no item-recovery (item/grid's tools/build-recovery.sh makes it)" >&2
+fi
+if [ -f "$ROOT/out/twrp/surfaceduo1-twrp.img" ]; then
+    cp "$ROOT/out/twrp/surfaceduo1-twrp.img" "$OUT/"
+else
+    echo "warning: no out/twrp/surfaceduo1-twrp.img: the release has no recovery for a phone from stock" >&2
+fi
+(cd "$OUT" && sha256sum $(ls | grep -v '^SHA256SUMS$') > SHA256SUMS)
 rm -rf "$WORK"
 chown -R "$OWNER": "$ROOT/out/release"
 echo "== done: $OUT"
