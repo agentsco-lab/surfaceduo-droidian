@@ -1,0 +1,20 @@
+[Unit]
+Description=item: the clock from Android's offset on a fresh install
+# timekeeper (Droidian) sets the time from the RTC plus its own offset file,
+# and with no file (a fresh install) it sets 1970. Android keeps the same
+# offset in persist (ats_1: ms from the RTC, little-endian), which outlives
+# installs: written into timekeeper's file once, and the time restored.
+# After the first shutdown timekeeper keeps its own. A file with less
+# than ~31 years in it is taken for none (timekeeper stores -1 when it
+# stores a 1970 clock).
+After=mnt-vendor-persist.mount timekeeper.service
+Wants=mnt-vendor-persist.mount
+Before=time-set.target systemd-timesyncd.service
+ConditionPathExists=/mnt/vendor/persist/time/ats_1
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'have=$(cat /data/time/timekeep 2>/dev/null); [ "${have:-0}" -gt 1000000000 ] 2>/dev/null && exit 0; ms=$(od -An -t d8 /mnt/vendor/persist/time/ats_1 | tr -d " "); [ -n "$ms" ] && [ "$ms" -gt 0 ] || exit 0; mkdir -p /data/time && echo $((ms / 1000)) > /data/time/timekeep && /usr/bin/timekeeper restore'
+
+[Install]
+WantedBy=multi-user.target

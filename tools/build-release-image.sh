@@ -119,6 +119,11 @@ mkdir -p "$MNT/var/lib/systemd/timesync"
 touch "$MNT/var/lib/systemd/timesync/clock"
 TS_UID=$(ch id -u systemd-timesync 2>/dev/null || echo)
 [ -n "$TS_UID" ] && chown -R "$TS_UID:$TS_UID" "$MNT/var/lib/systemd/timesync"
+# That holds only until timekeeper starts: with no offset file of its own it
+# sets the RTC's time, 1970 (seen 2026-10-25). Android's offset, kept in
+# persist across installs, seeds it on the first boot.
+install -Dm644 "$ROOT/tools/release-files/item-clock-seed.service" "$MNT/etc/systemd/system/item-clock-seed.service"
+ch systemctl enable item-clock-seed.service
 
 echo "== made per phone on its first boot, not shipped"
 rm -f "$MNT"/etc/ssh/ssh_host_*
