@@ -45,8 +45,11 @@ they were launched from, the hinge, the pen, CV ID - is item, a compositor
 of its own on top of the port: [agentsco-lab/item](https://github.com/agentsco-lab/item),
 with a minute of film and its screenshots.
 
-## Status (0.22.0 on Droidian 102)
+## Status (0.22.1 on Droidian 102)
 
+0.22.1 (2026-10-26) brings the sound ~40 s sooner in every boot: the ADSP
+is booted as soon as the Android container is up (ONLINE at ~16 s, not
+~55), and pulseaudio with it ([release notes](https://github.com/agentsco-lab/surfaceduo-droidian/releases/tag/v0.22.1)).
 The rows were checked on 0.21.0 (2026-09-29). 0.22.0 (2026-10-09) changed
 the sleep - a phone shut sleeps the night, Wi-Fi up, about 1.3 % an hour -
 and mended Flatpak; its [release notes](https://github.com/agentsco-lab/surfaceduo-droidian/releases/tag/v0.22.0)
